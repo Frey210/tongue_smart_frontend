@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
-type Screen = "dashboard" | "monitoring" | "devices";
+type Screen = "dashboard" | "monitoring" | "devices" | "users";
+type Role = "admin" | "operator" | "researcher";
+type User = { id: string; email: string; full_name: string; role: Role; is_active: boolean };
+type AuthSession = { access_token: string; refresh_token: string; expires_in: number; user: User };
 type Device = {
   device_id: string;
   firmware_version: string;
@@ -22,6 +25,7 @@ type Summary = {
 };
 
 const API = import.meta.env.VITE_API_URL ?? "/api/v1";
+const AUTH_KEY = "tongue-smart-auth";
 
 const fallbackDevice: Device = {
   device_id: "tongue-smart-v3",
@@ -42,6 +46,7 @@ function Icon({ name }: { name: Screen }) {
     dashboard: "M4 5h6v6H4zM14 5h6v10h-6zM4 15h6v4H4zM14 19h6",
     monitoring: "M3 13h4l2-7 4 12 3-9 2 4h3",
     devices: "M7 4h10a2 2 0 0 1 2 2v12H5V6a2 2 0 0 1 2-2Zm3 5h4v4h-4z",
+    users: "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11A3.5 3.5 0 1 0 9.5 4a3.5 3.5 0 0 0 0 7ZM17 11a3 3 0 0 0 0-6M19 14a4 4 0 0 1 3 4",
   };
   return <svg aria-hidden="true" viewBox="0 0 24 24"><path d={paths[name]} /></svg>;
 }
@@ -51,19 +56,38 @@ function Status({ online }: { online: boolean }) {
 }
 
 export function App() {
+  const [auth, setAuth] = useState<AuthSession | null>(() => {
+    const saved = sessionStorage.getItem(AUTH_KEY);
+    return saved ? JSON.parse(saved) as AuthSession : null;
+  });
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [device, setDevice] = useState<Device>(fallbackDevice);
   const [summary, setSummary] = useState<Summary>({ device_status: "offline", pending_sync: 0, completed_sessions: 0, last_calibration: null });
   const [apiOnline, setApiOnline] = useState(false);
 
+  const saveAuth = (session: AuthSession | null) => {
+    setAuth(session);
+    if (session) sessionStorage.setItem(AUTH_KEY, JSON.stringify(session));
+    else sessionStorage.removeItem(AUTH_KEY);
+  };
+
+  const logout = async () => {
+    if (auth) await fetch(`${API}/auth/logout`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: auth.refresh_token }),
+    }).catch(() => undefined);
+    saveAuth(null);
+  };
+
   useEffect(() => {
+    if (!auth) return;
     let active = true;
     const refresh = () => Promise.all([
-      fetch(`${API}/devices/current`).then((r) => {
+      fetch(`${API}/devices/current`, { headers: { Authorization: `Bearer ${auth.access_token}` } }).then((r) => {
         if (!r.ok) throw new Error("device request failed");
         return r.json() as Promise<Device>;
       }),
-      fetch(`${API}/dashboard/summary`).then((r) => {
+      fetch(`${API}/dashboard/summary`, { headers: { Authorization: `Bearer ${auth.access_token}` } }).then((r) => {
         if (!r.ok) throw new Error("summary request failed");
         return r.json() as Promise<Summary>;
       }),
@@ -78,12 +102,15 @@ export function App() {
     refresh();
     const timer = window.setInterval(refresh, 5000);
     return () => { active = false; window.clearInterval(timer); };
-  }, []);
+  }, [auth]);
+
+  if (!auth) return <Login onAuthenticated={saveAuth} />;
 
   const screens: { id: Screen; label: string }[] = [
     { id: "dashboard", label: "Dashboard" },
     { id: "monitoring", label: "Monitoring" },
     { id: "devices", label: "Perangkat" },
+    ...(auth.user.role === "admin" ? [{ id: "users" as Screen, label: "Pengguna" }] : []),
   ];
 
   return (
@@ -98,7 +125,7 @@ export function App() {
             </button>
           ))}
         </nav>
-        <div className="scope-note"><strong>Mode riset</strong><span>Bukan untuk diagnosis klinis mandiri.</span></div>
+        <div className="scope-note"><strong>{auth.user.full_name}</strong><span>{auth.user.role} · {auth.user.email}</span><button className="text-button" onClick={logout}>Keluar</button></div>
       </aside>
 
       <main id="main" tabIndex={-1}>
@@ -110,9 +137,104 @@ export function App() {
         {screen === "dashboard" && <Dashboard device={device} summary={summary} apiOnline={apiOnline} onOpenDevice={() => setScreen("devices")} />}
         {screen === "monitoring" && <Monitoring device={device} />}
         {screen === "devices" && <Devices device={device} apiOnline={apiOnline} />}
+        {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} />}
       </main>
     </div>
   );
+}
+
+function Login({ onAuthenticated }: { onAuthenticated: (session: AuthSession) => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const response = await fetch(`${API}/auth/login`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!response.ok) throw new Error("Email atau password tidak valid.");
+      onAuthenticated(await response.json() as AuthSession);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Login gagal. Coba kembali.");
+    } finally { setLoading(false); }
+  };
+
+  return <main className="login-page">
+    <section className="login-panel" aria-labelledby="login-title">
+      <div className="brand-mark"><span>TS</span><div>Tongue Smart<small>Research Dashboard</small></div></div>
+      <div><p className="eyebrow">AKSES TERLINDUNGI</p><h1 id="login-title">Masuk ke workspace riset</h1><p>Gunakan akun yang diberikan administrator sistem.</p></div>
+      <form onSubmit={submit}>
+        <label htmlFor="email">Email</label>
+        <input id="email" type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} />
+        <label htmlFor="password">Password</label>
+        <input id="password" type="password" autoComplete="current-password" minLength={10} required value={password} onChange={(event) => setPassword(event.target.value)} />
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button className="primary" type="submit" disabled={loading}>{loading ? "Memeriksa…" : "Masuk"}</button>
+      </form>
+      <p className="research-disclaimer">Khusus kegiatan penelitian. Bukan untuk diagnosis klinis mandiri.</p>
+    </section>
+  </main>;
+}
+
+function Users({ accessToken }: { accessToken: string }) {
+  const [users, setUsers] = useState<User[]>([]);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ full_name: "", email: "", role: "operator" as Role, password: "" });
+
+  const loadUsers = () => fetch(`${API}/users`, { headers: { Authorization: `Bearer ${accessToken}` } })
+    .then((response) => {
+      if (!response.ok) throw new Error("Daftar pengguna tidak dapat dimuat.");
+      return response.json() as Promise<User[]>;
+    }).then(setUsers).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."));
+
+  useEffect(() => { loadUsers(); }, [accessToken]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`${API}/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify(form),
+      });
+      if (!response.ok) {
+        const body = await response.json() as { detail?: string };
+        throw new Error(body.detail ?? "Pengguna tidak dapat dibuat.");
+      }
+      setForm({ full_name: "", email: "", role: "operator", password: "" });
+      await loadUsers();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); }
+    finally { setSaving(false); }
+  };
+
+  return <>
+    <section className="page-intro"><div><p className="eyebrow">ADMINISTRATION</p><h2>Pengguna dan peran</h2><p>Admin mengatur akses. Otorisasi tetap diverifikasi oleh backend.</p></div></section>
+    <section className="grid-two user-grid">
+      <article className="panel">
+        <p className="eyebrow">AKUN BARU</p><h3>Tambahkan pengguna</h3>
+        <form className="stack-form" onSubmit={submit}>
+          <label htmlFor="full-name">Nama lengkap</label><input id="full-name" required minLength={2} value={form.full_name} onChange={(event) => setForm({ ...form, full_name: event.target.value })} />
+          <label htmlFor="user-email">Email</label><input id="user-email" type="email" autoComplete="off" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+          <label htmlFor="role">Peran</label><select id="role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value as Role })}><option value="operator">Operator</option><option value="researcher">Researcher</option><option value="admin">Admin</option></select>
+          <label htmlFor="new-password">Password sementara</label><input id="new-password" type="password" autoComplete="new-password" minLength={10} required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <button className="primary" disabled={saving}>{saving ? "Menyimpan…" : "Buat pengguna"}</button>
+        </form>
+      </article>
+      <article className="panel"><p className="eyebrow">DIRECTORY</p><h3>Akun terdaftar</h3>
+        <div className="user-list">{users.map((user) => <div key={user.id}><span className="avatar" aria-hidden="true">{user.full_name.slice(0, 2).toUpperCase()}</span><div><strong>{user.full_name}</strong><span>{user.email}</span></div><span className="role-badge">{user.role}</span></div>)}</div>
+        {users.length === 0 && !error && <p className="empty-state">Belum ada pengguna.</p>}
+      </article>
+    </section>
+  </>;
 }
 
 function Dashboard({ device, summary, apiOnline, onOpenDevice }: { device: Device; summary: Summary; apiOnline: boolean; onOpenDevice: () => void }) {

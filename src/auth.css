@@ -1,0 +1,31 @@
+.login-page { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 15% 10%, #dceff0 0, transparent 32%), #f4f7fa; }
+.login-panel { width: min(100%, 460px); display: grid; gap: 28px; padding: clamp(28px, 6vw, 48px); background: #fff; border: 1px solid var(--line); border-radius: 20px; box-shadow: 0 20px 60px rgba(11, 36, 64, .12); }
+.login-panel h1 { margin: 8px 0; font-size: clamp(1.8rem, 5vw, 2.5rem); }
+.login-panel p { color: var(--muted); }
+.login-panel form, .stack-form { display: grid; gap: 10px; }
+.login-panel label, .stack-form label { margin-top: 8px; color: var(--text); font-size: .875rem; font-weight: 700; }
+.login-panel input, .stack-form input, .stack-form select { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid #aebdcc; border-radius: 8px; background: #fff; color: var(--text); font: inherit; }
+.login-panel input:focus, .stack-form input:focus, .stack-form select:focus { outline: 3px solid var(--focus); outline-offset: 2px; border-color: var(--teal); }
+.login-panel .primary, .stack-form .primary { margin-top: 14px; min-height: 46px; }
+.login-panel button:disabled, .stack-form button:disabled { cursor: wait; opacity: .6; }
+.form-error { margin: 4px 0 0; padding: 10px 12px; color: #8d1f1a !important; background: #fff0ef; border-left: 3px solid var(--red); border-radius: 4px; }
+.research-disclaimer { margin: 0; padding-top: 18px; border-top: 1px solid var(--line); font-size: .8rem; }
+.text-button { min-height: 44px; padding: 8px 0; border: 0; background: transparent; color: #b8dfe0; text-align: left; font: inherit; font-weight: 700; cursor: pointer; }
+.text-button:hover { color: #fff; }
+.user-grid { align-items: start; }
+.user-list { display: grid; }
+.user-list > div { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.user-list > div:last-child { border-bottom: 0; }
+.user-list strong, .user-list span { display: block; }
+.user-list div div span { margin-top: 3px; color: var(--muted); font-size: .82rem; overflow-wrap: anywhere; }
+.avatar { display: grid !important; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--teal-soft); color: #086666; font-weight: 800; }
+.role-badge { padding: 5px 9px; border-radius: 999px; background: #eef5fa; color: var(--navy); font-size: .72rem; font-weight: 800; text-transform: uppercase; }
+.empty-state { color: var(--muted); }
+
+@media (max-width: 720px) { .app-shell > aside nav { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 420px) {
+  .login-page { padding: 0; align-items: stretch; }
+  .login-panel { min-height: 100dvh; border: 0; border-radius: 0; align-content: center; }
+  .user-list > div { grid-template-columns: 42px minmax(0, 1fr); }
+  .role-badge { grid-column: 2; justify-self: start; }
+}
