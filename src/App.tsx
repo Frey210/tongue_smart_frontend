@@ -1,12 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 
-type Screen = "dashboard" | "subjects" | "examination" | "monitoring" | "results" | "history" | "devices" | "users";
+type Screen = "dashboard" | "subjects" | "examination" | "monitoring" | "results" | "history" | "exports" | "devices" | "users";
 type Role = "admin" | "operator" | "researcher";
 type User = { id: string; email: string; full_name: string; role: Role; is_active: boolean };
 type RegistrationRequest = { id: string; email: string; full_name: string; institution: string; status: string; created_at: string };
 type Subject = { id: string; subject_code: string; initials: string; research_group: string; year_of_birth: number | null; consent_status: "pending" | "granted" | "withdrawn"; notes: string; is_active: boolean; created_at: string };
 type ExaminationSession = { id: string; session_code: string; subject_code: string; modules: string[]; protocol_stages: string[]; electrode_site: string | null; status: string; created_at: string };
 type SessionResults = { session: ExaminationSession; channels: string[]; selected_channel: string | null; sample_count: number; batch_count: number; downsample_stride: number; summary: { minimum: number | null; maximum: number | null; average: number | null; quality: Record<string, number> }; points: { timestamp: string; protocol_stage: string; sensor_channel: string; value: number; unit: string; quality: string }[]; markers: { id: string; protocol_stage: string; label: string; occurred_at: string }[]; notes: { id: string; note: string; created_at: string }[] };
+type ExportJob = { id: string; session_ids: string[]; data_mode: string; include_metadata: boolean; include_markers: boolean; status: string; row_count: number; checksum: string; filename: string; created_at: string };
 type AuthSession = { access_token: string; refresh_token: string; expires_in: number; user: User };
 type Device = {
   device_id: string;
@@ -53,6 +54,7 @@ function Icon({ name }: { name: Screen }) {
     examination: "M12 5v14M5 12h14",
     results: "M7 3h7l5 5v13H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM10 13h6M10 17h4",
     history: "M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4.5V9h4.5M12 8v4.5l3 2",
+    exports: "M12 3v12M7 10l5 5 5-5M5 20h14",
     monitoring: "M3 13h4l2-7 4 12 3-9 2 4h3",
     devices: "M7 4h10a2 2 0 0 1 2 2v12H5V6a2 2 0 0 1 2-2Zm3 5h4v4h-4z",
     users: "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11A3.5 3.5 0 1 0 9.5 4a3.5 3.5 0 0 0 0 7ZM17 11a3 3 0 0 0 0-6M19 14a4 4 0 0 1 3 4",
@@ -125,6 +127,7 @@ export function App() {
     { id: "monitoring", label: "Monitoring" },
     { id: "results", label: "Hasil" },
     { id: "history", label: "Riwayat" },
+    { id: "exports", label: "Ekspor" },
     { id: "devices", label: "Perangkat" },
     ...(auth.user.role === "admin" ? [{ id: "users" as Screen, label: "Pengguna" }] : []),
   ];
@@ -156,6 +159,7 @@ export function App() {
         {screen === "monitoring" && <Monitoring device={device} accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
         {screen === "results" && <Results accessToken={auth.access_token} role={auth.user.role} initialSessionId={resultSessionId} onUnauthorized={() => saveAuth(null)} />}
         {screen === "history" && <History accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} onView={(id) => { setResultSessionId(id); setScreen("results"); }} />}
+        {screen === "exports" && <Exports accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
         {screen === "devices" && <Devices device={device} apiOnline={apiOnline} />}
         {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
       </main>
@@ -426,6 +430,27 @@ function Metric({ label, value, detail, warning = false }: { label: string; valu
 
 function Capability({ name, meta, enabled }: { name: string; meta: string; enabled: boolean }) {
   return <div className="capability"><span className={`cap-icon ${enabled ? "enabled" : "disabled"}`}>{enabled ? "✓" : "—"}</span><div><strong>{name}</strong><span>{meta}</span></div><span className="cap-state">{enabled ? "Tersedia" : "Nonaktif"}</span></div>;
+}
+
+function Exports({ accessToken, onUnauthorized }: { accessToken: string; onUnauthorized: () => void }) {
+  const [sessions, setSessions] = useState<ExaminationSession[]>([]);
+  const [jobs, setJobs] = useState<ExportJob[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [mode, setMode] = useState("both");
+  const [metadata, setMetadata] = useState(true);
+  const [markers, setMarkers] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  const load = () => Promise.all([fetch(`${API}/sessions`, { headers }), fetch(`${API}/exports`, { headers })]).then(async ([sessionResponse, exportResponse]) => {
+    if (sessionResponse.status === 401 || exportResponse.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir."); }
+    if (!sessionResponse.ok || !exportResponse.ok) throw new Error("Data ekspor tidak dapat dimuat.");
+    setSessions(await sessionResponse.json() as ExaminationSession[]); setJobs(await exportResponse.json() as ExportJob[]);
+  }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."));
+  useEffect(() => { load(); }, [accessToken]);
+  const create = async () => { setSaving(true); setError(""); try { const response = await fetch(`${API}/exports`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ session_ids: selected, data_mode: mode, include_metadata: metadata, include_markers: markers }) }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Ekspor tidak dapat dibuat."); } setSelected([]); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); } };
+  const download = async (job: ExportJob) => { const response = await fetch(`${API}/exports/${job.id}/download`, { headers }); if (!response.ok) { setError("Berkas tidak dapat diunduh."); return; } const url = URL.createObjectURL(await response.blob()); const anchor = document.createElement("a"); anchor.href = url; anchor.download = job.filename; anchor.click(); URL.revokeObjectURL(url); };
+  return <><section className="page-intro"><div><p className="eyebrow">DATA EXPORT</p><h2>Ekspor dataset penelitian</h2><p>Pilih sesi dan jenis nilai. Setiap berkas memiliki checksum untuk verifikasi.</p></div></section>{error && <p className="form-error" role="alert">{error}</p>}<section className="export-layout"><article className="panel"><p className="eyebrow">KONFIGURASI</p><h3>Pilih data</h3><fieldset className="export-sessions"><legend>Sesi pemeriksaan</legend>{sessions.map((session) => <label key={session.id}><input type="checkbox" checked={selected.includes(session.id)} onChange={() => setSelected(selected.includes(session.id) ? selected.filter((id) => id !== session.id) : [...selected, session.id])} /><span><strong>{session.session_code}</strong><small>{session.subject_code} · {session.status}</small></span></label>)}{sessions.length === 0 && <p className="empty-state">Belum ada sesi untuk diekspor.</p>}</fieldset><label className="export-field" htmlFor="data-mode">Jenis nilai</label><select id="data-mode" value={mode} onChange={(event) => setMode(event.target.value)}><option value="both">Raw + terkalibrasi</option><option value="raw">Raw saja</option><option value="processed">Terkalibrasi saja</option></select><label className="check-row"><input type="checkbox" checked={metadata} onChange={(event) => setMetadata(event.target.checked)} /> Sertakan metadata sesi</label><label className="check-row"><input type="checkbox" checked={markers} onChange={(event) => setMarkers(event.target.checked)} /> Sertakan event marker</label><button className="primary export-create" disabled={!selected.length || saving} onClick={create}>{saving ? "Membuat CSV…" : "Buat ekspor CSV"}</button></article><article className="panel"><p className="eyebrow">ARSIP EKSPOR</p><h3>Berkas siap diunduh</h3><div className="export-list">{jobs.map((job) => <div key={job.id}><div><strong>{job.filename}</strong><span>{job.row_count} baris · {job.data_mode} · {new Date(job.created_at).toLocaleString("id-ID")}</span><code title={job.checksum}>SHA-256 {job.checksum.slice(0, 16)}…</code></div><button className="secondary" onClick={() => download(job)}>Unduh</button></div>)}</div>{jobs.length === 0 && <p className="empty-state">Belum ada berkas ekspor.</p>}</article></section></>;
 }
 
 function History({ accessToken, onUnauthorized, onView }: { accessToken: string; onUnauthorized: () => void; onView: (id: string) => void }) {
