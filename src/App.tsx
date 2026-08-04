@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 
-type Screen = "dashboard" | "subjects" | "monitoring" | "devices" | "users";
+type Screen = "dashboard" | "subjects" | "examination" | "monitoring" | "devices" | "users";
 type Role = "admin" | "operator" | "researcher";
 type User = { id: string; email: string; full_name: string; role: Role; is_active: boolean };
 type RegistrationRequest = { id: string; email: string; full_name: string; institution: string; status: string; created_at: string };
 type Subject = { id: string; subject_code: string; initials: string; research_group: string; year_of_birth: number | null; consent_status: "pending" | "granted" | "withdrawn"; notes: string; is_active: boolean; created_at: string };
+type ExaminationSession = { id: string; session_code: string; subject_code: string; modules: string[]; protocol_stages: string[]; electrode_site: string | null; status: string; created_at: string };
 type AuthSession = { access_token: string; refresh_token: string; expires_in: number; user: User };
 type Device = {
   device_id: string;
@@ -48,6 +49,7 @@ function Icon({ name }: { name: Screen }) {
   const paths = {
     dashboard: "M4 5h6v6H4zM14 5h6v10h-6zM4 15h6v4H4zM14 19h6",
     subjects: "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11A3.5 3.5 0 1 0 9.5 4a3.5 3.5 0 0 0 0 7Z",
+    examination: "M12 5v14M5 12h14",
     monitoring: "M3 13h4l2-7 4 12 3-9 2 4h3",
     devices: "M7 4h10a2 2 0 0 1 2 2v12H5V6a2 2 0 0 1 2-2Zm3 5h4v4h-4z",
     users: "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11A3.5 3.5 0 1 0 9.5 4a3.5 3.5 0 0 0 0 7ZM17 11a3 3 0 0 0 0-6M19 14a4 4 0 0 1 3 4",
@@ -115,6 +117,7 @@ export function App() {
   const screens: { id: Screen; label: string }[] = [
     { id: "dashboard", label: "Dashboard" },
     { id: "subjects", label: "Subjek" },
+    ...(auth.user.role !== "researcher" ? [{ id: "examination" as Screen, label: "Pemeriksaan" }] : []),
     { id: "monitoring", label: "Monitoring" },
     { id: "devices", label: "Perangkat" },
     ...(auth.user.role === "admin" ? [{ id: "users" as Screen, label: "Pengguna" }] : []),
@@ -143,6 +146,7 @@ export function App() {
 
         {screen === "dashboard" && <Dashboard device={device} summary={summary} apiOnline={apiOnline} onOpenDevice={() => setScreen("devices")} />}
         {screen === "subjects" && <Subjects accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
+        {screen === "examination" && auth.user.role !== "researcher" && <ExaminationWizard accessToken={auth.access_token} device={device} onUnauthorized={() => saveAuth(null)} onPrepared={() => setScreen("monitoring")} />}
         {screen === "monitoring" && <Monitoring device={device} />}
         {screen === "devices" && <Devices device={device} apiOnline={apiOnline} />}
         {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
@@ -199,6 +203,62 @@ function Login({ onAuthenticated }: { onAuthenticated: (session: AuthSession) =>
       <p className="research-disclaimer">Sistem ini merekam, menyusun, menampilkan, dan mengekspor data sensor untuk keperluan penelitian. Sistem tidak melakukan klasifikasi maloklusi, diagnosis, maupun rekomendasi perawatan.</p>
     </div></section>
   </main>;
+}
+
+function ExaminationWizard({ accessToken, device, onUnauthorized, onPrepared }: { accessToken: string; device: Device; onUnauthorized: () => void; onPrepared: () => void }) {
+  const [step, setStep] = useState(1);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [subjectId, setSubjectId] = useState("");
+  const [modules, setModules] = useState<string[]>([]);
+  const [electrodeSite, setElectrodeSite] = useState("");
+  const [electrodeNote, setElectrodeNote] = useState("");
+  const [stages, setStages] = useState<string[]>(["rest", "clench"]);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [prepared, setPrepared] = useState<ExaminationSession | null>(null);
+
+  useEffect(() => { fetch(`${API}/subjects?consent_status=granted`, { headers: { Authorization: `Bearer ${accessToken}` } }).then((response) => {
+    if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir."); }
+    if (!response.ok) throw new Error("Subjek tidak dapat dimuat."); return response.json() as Promise<Subject[]>;
+  }).then(setSubjects).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan.")); }, [accessToken]);
+
+  const moduleOptions = [
+    { id: "emg", label: "sEMG", detail: `${device.emg_channels} kanal analog`, available: device.emg_channels > 0 },
+    { id: "tongue_pressure", label: "Tekanan Lidah", detail: `${device.tongue_pressure_channels} kanal FSR bergiliran`, available: device.tongue_pressure_channels > 0 },
+    { id: "lip_force", label: "Gaya Bibir", detail: "Load cell + traksi lokal", available: device.lip_force },
+  ];
+  const stageOptions = [{ id: "rest", label: "Posisi istirahat", duration: "30 dtk" }, { id: "mouth_close", label: "Menutup mulut", duration: "15 dtk" }, { id: "clench", label: "Menggigit (clenching)", duration: "3 × 10 dtk" }, { id: "tongue_press", label: "Tekanan lidah bergiliran", duration: "5 titik" }, { id: "lip_pull", label: "Tarikan gaya bibir", duration: "2 ulangan" }];
+  const selectedSubject = subjects.find((subject) => subject.id === subjectId);
+  const checks = [{ label: "Perangkat terdaftar", ok: Boolean(device.device_id) }, { label: "Capability sensor tersedia", ok: modules.length > 0 }, { label: "Penyimpanan lokal", ok: true }, { label: "Kalibrasi", ok: true }, { label: "Koneksi internet", ok: device.connection === "online", optional: true }];
+  const canContinue = step === 1 ? Boolean(subjectId) : step === 2 ? modules.length > 0 && (!modules.includes("emg") || (Boolean(electrodeSite) && (electrodeSite !== "other" || Boolean(electrodeNote.trim())))) : step === 4 ? stages.length > 0 : true;
+  const toggle = (value: string, current: string[], setter: (next: string[]) => void) => setter(current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
+
+  const prepare = async () => {
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`${API}/sessions`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ subject_id: subjectId, device_id: device.device_id, modules, protocol_stages: stages, electrode_site: modules.includes("emg") ? electrodeSite : null, electrode_site_note: electrodeSite === "other" ? electrodeNote : null }) });
+      if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir."); }
+      if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Sesi tidak dapat dibuat."); }
+      setPrepared(await response.json() as ExaminationSession);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); }
+    finally { setSaving(false); }
+  };
+
+  if (prepared) return <section className="prepared-state" role="status"><span className="prepared-check">✓</span><p className="eyebrow">SESI SIAP</p><h2>{prepared.session_code}</h2><p>Sesi untuk <strong>{prepared.subject_code}</strong> sudah disimpan sebagai prepared. Akuisisi tetap dimulai dari perangkat.</p><button className="primary" onClick={onPrepared}>Buka monitoring</button></section>;
+
+  return <>
+    <section className="page-intro"><div><p className="eyebrow">NEW EXAMINATION</p><h2>Persiapan sesi pemeriksaan</h2><p>Lengkapi lima langkah sebelum sesi dikirim ke perangkat.</p></div><span className="step-badge">Langkah {step} dari 5</span></section>
+    <ol className="wizard-progress" aria-label="Kemajuan persiapan">{["Subjek", "Modul", "Perangkat", "Protokol", "Konfirmasi"].map((label, index) => <li key={label} className={step === index + 1 ? "active" : step > index + 1 ? "done" : ""}><span>{step > index + 1 ? "✓" : index + 1}</span><b>{label}</b></li>)}</ol>
+    <section className="panel wizard-card">
+      {step === 1 && <div><p className="eyebrow">LANGKAH 1</p><h3>Pilih subjek dengan consent aktif</h3><div className="choice-list">{subjects.map((subject) => <button type="button" key={subject.id} className={subjectId === subject.id ? "selected" : ""} onClick={() => setSubjectId(subject.id)}><span className="avatar">{subject.initials}</span><span><strong>{subject.subject_code}</strong><small>{subject.research_group} · consent disetujui</small></span><i>{subjectId === subject.id ? "Dipilih" : "Pilih"}</i></button>)}</div>{subjects.length === 0 && <p className="empty-state">Belum ada subjek dengan consent disetujui. Buka halaman Subjek untuk memperbarui consent.</p>}</div>}
+      {step === 2 && <div><p className="eyebrow">LANGKAH 2</p><h3>Pilih modul pengukuran</h3><div className="module-options">{moduleOptions.map((item) => <button type="button" key={item.id} disabled={!item.available} className={modules.includes(item.id) ? "selected" : ""} onClick={() => toggle(item.id, modules, setModules)}><strong>{item.label}</strong><span>{item.detail}</span><small>{item.available ? modules.includes(item.id) ? "Aktif" : "Tersedia" : "Tidak dilaporkan firmware"}</small></button>)}</div>{modules.includes("emg") && <div className="emg-placement"><label htmlFor="electrode-site">Posisi pemasangan elektroda EMG</label><select id="electrode-site" required value={electrodeSite} onChange={(event) => setElectrodeSite(event.target.value)}><option value="">Pilih posisi…</option><option value="masseter_left">Masseter kiri</option><option value="masseter_right">Masseter kanan</option><option value="temporalis_left">Temporalis kiri</option><option value="temporalis_right">Temporalis kanan</option><option value="other">Lokasi lainnya</option></select>{electrodeSite === "other" && <><label htmlFor="electrode-note">Keterangan lokasi</label><input id="electrode-note" required value={electrodeNote} onChange={(event) => setElectrodeNote(event.target.value)} /></>}</div>}</div>}
+      {step === 3 && <div><p className="eyebrow">LANGKAH 3</p><h3>Validasi perangkat dan sensor</h3><div className="device-checks">{checks.map((check) => <div key={check.label}><span className={check.ok ? "ok" : check.optional ? "optional" : "failed"}>{check.ok ? "✓" : check.optional ? "!" : "×"}</span><strong>{check.label}</strong><small>{check.ok ? "Lolos" : check.optional ? "Opsional — sesi tetap dapat disiapkan offline" : "Perlu diperiksa"}</small></div>)}</div><p className="security-note">Firmware tetap menjadi sumber kebenaran untuk kalibrasi dan keselamatan. Dashboard hanya menyiapkan metadata sesi.</p></div>}
+      {step === 4 && <div><p className="eyebrow">LANGKAH 4</p><h3>Pilih tahap protokol</h3><div className="protocol-list">{stageOptions.map((stage) => <label key={stage.id}><input type="checkbox" checked={stages.includes(stage.id)} onChange={() => toggle(stage.id, stages, setStages)} /><span><strong>{stage.label}</strong><small>{stage.duration}</small></span></label>)}</div></div>}
+      {step === 5 && <div><p className="eyebrow">LANGKAH 5</p><h3>Konfirmasi sesi</h3><dl className="review-list"><div><dt>Subjek</dt><dd>{selectedSubject?.subject_code}</dd></div><div><dt>Perangkat</dt><dd>{device.device_id}</dd></div><div><dt>Modul</dt><dd>{modules.join(", ")}</dd></div>{modules.includes("emg") && <div><dt>Elektroda EMG</dt><dd>{electrodeSite.replaceAll("_", " ")}</dd></div>}<div><dt>Tahap protokol</dt><dd>{stages.length} tahap</dd></div><div><dt>Status awal</dt><dd>Prepared</dd></div></dl><p className="security-note">Membuat sesi tidak menyalakan sensor atau motor. Mulai akuisisi dari menu lokal perangkat.</p></div>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="wizard-actions"><button type="button" className="secondary" disabled={step === 1 || saving} onClick={() => setStep(step - 1)}>Kembali</button>{step < 5 ? <button type="button" className="primary" disabled={!canContinue} onClick={() => setStep(step + 1)}>Lanjutkan</button> : <button type="button" className="primary" disabled={saving} onClick={prepare}>{saving ? "Menyiapkan…" : "Siapkan sesi"}</button>}</div>
+    </section>
+  </>;
 }
 
 function Subjects({ accessToken, role, onUnauthorized }: { accessToken: string; role: Role; onUnauthorized: () => void }) {
