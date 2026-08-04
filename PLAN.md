@@ -49,6 +49,8 @@ src/
 - WebSocket lifecycle dan reconnect.
 - Buffer grafik terbatas; UI tidak menyimpan seluruh raw session dalam memory.
 - Tab EMG/tekanan/gaya/gabungan mengikuti capability.
+- Stage EMG mewajibkan dropdown posisi elektroda sebelum rekaman: masseter kiri/kanan, temporalis kiri/kanan, atau lokasi lain dengan catatan wajib.
+- Posisi elektroda tampil pada header grafik dan dikunci selama stage merekam; perubahan posisi membuat stage baru dan tidak mengubah metadata data yang sudah direkam.
 - Pause view tidak menghentikan akuisisi perangkat.
 
 ### F4 — Results and export
