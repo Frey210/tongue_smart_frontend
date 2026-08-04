@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 
-type Screen = "dashboard" | "subjects" | "examination" | "monitoring" | "devices" | "users";
+type Screen = "dashboard" | "subjects" | "examination" | "monitoring" | "results" | "history" | "devices" | "users";
 type Role = "admin" | "operator" | "researcher";
 type User = { id: string; email: string; full_name: string; role: Role; is_active: boolean };
 type RegistrationRequest = { id: string; email: string; full_name: string; institution: string; status: string; created_at: string };
 type Subject = { id: string; subject_code: string; initials: string; research_group: string; year_of_birth: number | null; consent_status: "pending" | "granted" | "withdrawn"; notes: string; is_active: boolean; created_at: string };
 type ExaminationSession = { id: string; session_code: string; subject_code: string; modules: string[]; protocol_stages: string[]; electrode_site: string | null; status: string; created_at: string };
+type SessionResults = { session: ExaminationSession; channels: string[]; selected_channel: string | null; sample_count: number; batch_count: number; downsample_stride: number; summary: { minimum: number | null; maximum: number | null; average: number | null; quality: Record<string, number> }; points: { timestamp: string; protocol_stage: string; sensor_channel: string; value: number; unit: string; quality: string }[]; markers: { id: string; protocol_stage: string; label: string; occurred_at: string }[]; notes: { id: string; note: string; created_at: string }[] };
 type AuthSession = { access_token: string; refresh_token: string; expires_in: number; user: User };
 type Device = {
   device_id: string;
@@ -50,6 +51,8 @@ function Icon({ name }: { name: Screen }) {
     dashboard: "M4 5h6v6H4zM14 5h6v10h-6zM4 15h6v4H4zM14 19h6",
     subjects: "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11A3.5 3.5 0 1 0 9.5 4a3.5 3.5 0 0 0 0 7Z",
     examination: "M12 5v14M5 12h14",
+    results: "M7 3h7l5 5v13H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM10 13h6M10 17h4",
+    history: "M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4.5V9h4.5M12 8v4.5l3 2",
     monitoring: "M3 13h4l2-7 4 12 3-9 2 4h3",
     devices: "M7 4h10a2 2 0 0 1 2 2v12H5V6a2 2 0 0 1 2-2Zm3 5h4v4h-4z",
     users: "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11A3.5 3.5 0 1 0 9.5 4a3.5 3.5 0 0 0 0 7ZM17 11a3 3 0 0 0 0-6M19 14a4 4 0 0 1 3 4",
@@ -70,6 +73,7 @@ export function App() {
   const [device, setDevice] = useState<Device>(fallbackDevice);
   const [summary, setSummary] = useState<Summary>({ device_status: "offline", pending_sync: 0, completed_sessions: 0, subject_count: 0, last_calibration: null });
   const [apiOnline, setApiOnline] = useState(false);
+  const [resultSessionId, setResultSessionId] = useState("");
 
   const saveAuth = (session: AuthSession | null) => {
     setAuth(session);
@@ -119,6 +123,8 @@ export function App() {
     { id: "subjects", label: "Subjek" },
     ...(auth.user.role !== "researcher" ? [{ id: "examination" as Screen, label: "Pemeriksaan" }] : []),
     { id: "monitoring", label: "Monitoring" },
+    { id: "results", label: "Hasil" },
+    { id: "history", label: "Riwayat" },
     { id: "devices", label: "Perangkat" },
     ...(auth.user.role === "admin" ? [{ id: "users" as Screen, label: "Pengguna" }] : []),
   ];
@@ -148,6 +154,8 @@ export function App() {
         {screen === "subjects" && <Subjects accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
         {screen === "examination" && auth.user.role !== "researcher" && <ExaminationWizard accessToken={auth.access_token} device={device} onUnauthorized={() => saveAuth(null)} onPrepared={() => setScreen("monitoring")} />}
         {screen === "monitoring" && <Monitoring device={device} accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
+        {screen === "results" && <Results accessToken={auth.access_token} role={auth.user.role} initialSessionId={resultSessionId} onUnauthorized={() => saveAuth(null)} />}
+        {screen === "history" && <History accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} onView={(id) => { setResultSessionId(id); setScreen("results"); }} />}
         {screen === "devices" && <Devices device={device} apiOnline={apiOnline} />}
         {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
       </main>
@@ -418,6 +426,33 @@ function Metric({ label, value, detail, warning = false }: { label: string; valu
 
 function Capability({ name, meta, enabled }: { name: string; meta: string; enabled: boolean }) {
   return <div className="capability"><span className={`cap-icon ${enabled ? "enabled" : "disabled"}`}>{enabled ? "✓" : "—"}</span><div><strong>{name}</strong><span>{meta}</span></div><span className="cap-state">{enabled ? "Tersedia" : "Nonaktif"}</span></div>;
+}
+
+function History({ accessToken, onUnauthorized, onView }: { accessToken: string; onUnauthorized: () => void; onView: (id: string) => void }) {
+  const [sessions, setSessions] = useState<ExaminationSession[]>([]);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => { fetch(`${API}/sessions`, { headers: { Authorization: `Bearer ${accessToken}` } }).then((response) => { if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir."); } if (!response.ok) throw new Error("Riwayat tidak dapat dimuat."); return response.json() as Promise<ExaminationSession[]>; }).then(setSessions).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan.")); }, [accessToken]);
+  const filtered = sessions.filter((session) => (!search || `${session.session_code} ${session.subject_code}`.toLowerCase().includes(search.toLowerCase())) && (!statusFilter || session.status === statusFilter));
+  return <><section className="page-intro"><div><p className="eyebrow">SESSION ARCHIVE</p><h2>Riwayat pemeriksaan</h2><p>Seluruh sesi terkode, dari persiapan hingga selesai.</p></div><span className="subject-total">{filtered.length} sesi</span></section><section className="subject-toolbar"><input aria-label="Cari sesi" placeholder="Cari kode sesi atau subjek…" value={search} onChange={(event) => setSearch(event.target.value)} /><select aria-label="Filter status sesi" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Semua status</option><option value="prepared">Prepared</option><option value="active">Active</option><option value="completed">Completed</option></select></section>{error && <p className="form-error" role="alert">{error}</p>}<section className="panel history-panel"><div className="history-list">{filtered.map((session) => <div key={session.id}><div><strong>{session.session_code}</strong><span>{session.subject_code} · {new Date(session.created_at).toLocaleString("id-ID")}</span></div><span>{session.modules.join(" + ")}</span><span className={`session-state ${session.status}`}>{session.status}</span><button className="secondary" onClick={() => onView(session.id)}>Lihat hasil</button></div>)}</div>{filtered.length === 0 && <p className="empty-state">Tidak ada sesi yang sesuai filter.</p>}</section></>;
+}
+
+function Results({ accessToken, role, initialSessionId, onUnauthorized }: { accessToken: string; role: Role; initialSessionId: string; onUnauthorized: () => void }) {
+  const [sessions, setSessions] = useState<ExaminationSession[]>([]);
+  const [sessionId, setSessionId] = useState(initialSessionId);
+  const [channel, setChannel] = useState("");
+  const [results, setResults] = useState<SessionResults | null>(null);
+  const [note, setNote] = useState("");
+  const [marker, setMarker] = useState("");
+  const [error, setError] = useState("");
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  useEffect(() => { fetch(`${API}/sessions`, { headers }).then((response) => { if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir."); } return response.json() as Promise<ExaminationSession[]>; }).then((items) => { setSessions(items); if (!sessionId && items.length) setSessionId(items[0].id); }).catch(() => setError("Daftar sesi tidak dapat dimuat.")); }, [accessToken]);
+  const loadResults = () => { if (!sessionId) { setResults(null); return; } const query = channel ? `?sensor_channel=${encodeURIComponent(channel)}` : ""; fetch(`${API}/sessions/${sessionId}/results${query}`, { headers }).then((response) => { if (!response.ok) throw new Error("Hasil sesi tidak dapat dimuat."); return response.json() as Promise<SessionResults>; }).then(setResults).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan.")); };
+  useEffect(loadResults, [sessionId, channel, accessToken]);
+  const post = async (kind: "notes" | "markers") => { if (!results) return; const body = kind === "notes" ? { note } : { label: marker, protocol_stage: results.session.protocol_stages[0] ?? "unspecified", occurred_at: new Date().toISOString() }; const response = await fetch(`${API}/sessions/${sessionId}/${kind}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) }); if (!response.ok) { setError("Catatan atau marker tidak dapat disimpan."); return; } setNote(""); setMarker(""); loadResults(); };
+  const values = results?.points.map((point) => point.value) ?? []; const min = Math.min(...values); const max = Math.max(...values); const chartPoints = values.map((value, index) => `${values.length <= 1 ? 0 : index * 800 / (values.length - 1)},${220 - ((value - min) / Math.max(1, max - min)) * 180}`).join(" ");
+  return <><section className="page-intro"><div><p className="eyebrow">EXAMINATION RESULTS</p><h2>Hasil pemeriksaan</h2><p>Seri grafik diringkas untuk tampilan; sampel mentah di database tidak diubah.</p></div></section><section className="result-controls"><select aria-label="Pilih sesi hasil" value={sessionId} onChange={(event) => { setSessionId(event.target.value); setChannel(""); }}><option value="">Pilih sesi…</option>{sessions.map((session) => <option key={session.id} value={session.id}>{session.session_code} · {session.subject_code}</option>)}</select><select aria-label="Pilih kanal sensor" value={channel} onChange={(event) => setChannel(event.target.value)}><option value="">Semua kanal</option>{results?.channels.map((item) => <option key={item}>{item}</option>)}</select></section>{error && <p className="form-error" role="alert">{error}</p>}{results && <><section className="metrics result-metrics"><Metric label="Sampel" value={String(results.sample_count)} detail={`${results.batch_count} batch tersimpan`} /><Metric label="Rata-rata" value={results.summary.average?.toFixed(2) ?? "—"} detail={channel || "Semua kanal"} /><Metric label="Puncak" value={results.summary.maximum?.toFixed(2) ?? "—"} detail={`${results.summary.quality.good ?? 0} kualitas baik`} /><Metric label="Downsample" value={`${results.points.length}`} detail={`Stride ${results.downsample_stride}`} /></section><section className="monitor-layout"><article className="panel"><div className="panel-title"><div><p className="eyebrow">SIGNAL OVERVIEW</p><h3>{channel || "Gabungan kanal"}</h3></div><span className="unit">{results.points[0]?.unit ?? "unit"}</span></div><div className="result-chart" role="img" aria-label={`Grafik ${results.points.length} titik hasil`}><svg viewBox="0 0 800 240" preserveAspectRatio="none"><path className="grid" d="M0 40H800M0 100H800M0 160H800M0 220H800"/><polyline points={chartPoints} /></svg>{!results.points.length && <p>Belum ada sampel pada sesi ini.</p>}</div><p className="chart-summary">{results.sample_count} sampel · minimum {results.summary.minimum?.toFixed(2) ?? "—"} · maksimum {results.summary.maximum?.toFixed(2) ?? "—"}</p></article><aside className="panel annotations"><p className="eyebrow">ANNOTATIONS</p><h3>Marker dan catatan</h3>{role !== "researcher" && <div className="inline-entry"><input aria-label="Marker baru" placeholder="Label marker" value={marker} onChange={(event) => setMarker(event.target.value)} /><button className="secondary" disabled={!marker.trim()} onClick={() => post("markers")}>Tambah marker</button></div>}<div className="inline-entry"><textarea aria-label="Catatan baru" placeholder="Catatan operator/peneliti" value={note} onChange={(event) => setNote(event.target.value)} /><button className="secondary" disabled={!note.trim()} onClick={() => post("notes")}>Simpan catatan</button></div><div className="annotation-list">{results.markers.map((item) => <p key={item.id}><strong>{item.label}</strong><span>Marker · {item.protocol_stage}</span></p>)}{results.notes.map((item) => <p key={item.id}><strong>{item.note}</strong><span>{new Date(item.created_at).toLocaleString("id-ID")}</span></p>)}</div></aside></section></>}</>;
 }
 
 function Monitoring({ device, accessToken, role, onUnauthorized }: { device: Device; accessToken: string; role: Role; onUnauthorized: () => void }) {
