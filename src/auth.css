@@ -110,6 +110,15 @@
 .prepared-state { max-width: 650px; margin: 70px auto 0; padding: 50px; border: 1px solid var(--line); border-radius: 16px; background: #fff; text-align: center; }
 .prepared-state p:not(.eyebrow) { color: var(--muted); line-height: 1.65; }
 .prepared-check { display: grid; place-items: center; width: 52px; height: 52px; margin: 0 auto 18px; border-radius: 50%; background: #e8f4ed; color: var(--green); font-size: 25px; font-weight: 900; }
+.session-state { padding: 8px 12px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.session-state.prepared { background: #eef5fa; color: var(--primary); }
+.session-state.active { background: #e8f4ed; color: var(--green); }
+.session-state.completed { background: #e8eef4; color: var(--muted); }
+.session-state.none { background: #faf1df; color: var(--amber); }
+.monitor-session-bar { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.monitor-session-bar label { font-size: 12px; font-weight: 800; }
+.monitor-session-bar select { flex: 1; min-width: 0; min-height: 44px; padding: 8px 11px; border: 1px solid #ccd8e3; border-radius: 8px; background: #fff; font: inherit; }
+.danger-button { min-height: 44px; padding: 0 15px; border: 1px solid #d7aaa7; border-radius: 9px; background: #fff5f4; color: var(--red); cursor: pointer; font-weight: 800; }
 
 @media (max-width: 860px) {
   .auth-layout { grid-template-columns: 1fr; }
@@ -135,6 +144,7 @@
   .device-checks > div { grid-template-columns: 34px 1fr; padding: 8px 0; }
   .device-checks small { grid-column: 2; }
   .review-list div { grid-template-columns: 1fr; gap: 4px; }
+  .monitor-session-bar { align-items: stretch; flex-direction: column; }
   .user-list > div { grid-template-columns: 42px minmax(0, 1fr); }
   .role-badge { grid-column: 2; justify-self: start; }
 }

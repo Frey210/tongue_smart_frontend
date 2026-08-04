@@ -147,7 +147,7 @@ export function App() {
         {screen === "dashboard" && <Dashboard device={device} summary={summary} apiOnline={apiOnline} onOpenDevice={() => setScreen("devices")} />}
         {screen === "subjects" && <Subjects accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
         {screen === "examination" && auth.user.role !== "researcher" && <ExaminationWizard accessToken={auth.access_token} device={device} onUnauthorized={() => saveAuth(null)} onPrepared={() => setScreen("monitoring")} />}
-        {screen === "monitoring" && <Monitoring device={device} />}
+        {screen === "monitoring" && <Monitoring device={device} accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
         {screen === "devices" && <Devices device={device} apiOnline={apiOnline} />}
         {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
       </main>
@@ -420,18 +420,35 @@ function Capability({ name, meta, enabled }: { name: string; meta: string; enabl
   return <div className="capability"><span className={`cap-icon ${enabled ? "enabled" : "disabled"}`}>{enabled ? "✓" : "—"}</span><div><strong>{name}</strong><span>{meta}</span></div><span className="cap-state">{enabled ? "Tersedia" : "Nonaktif"}</span></div>;
 }
 
-function Monitoring({ device }: { device: Device }) {
+function Monitoring({ device, accessToken, role, onUnauthorized }: { device: Device; accessToken: string; role: Role; onUnauthorized: () => void }) {
   const points = [20,24,22,31,35,28,42,46,39,51,56,48,63,58,68,62,72,66,75,70];
+  const [sessions, setSessions] = useState<ExaminationSession[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const load = () => fetch(`${API}/sessions`, { headers: { Authorization: `Bearer ${accessToken}` } }).then((response) => {
+    if (response.status === 401) { onUnauthorized(); throw new Error("Sesi login berakhir."); }
+    if (!response.ok) throw new Error("Daftar sesi tidak dapat dimuat."); return response.json() as Promise<ExaminationSession[]>;
+  }).then((items) => { setSessions(items); if (!selectedId && items.length) setSelectedId(items[0].id); setError(""); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."));
+  useEffect(() => { load(); const timer = window.setInterval(load, 4000); return () => window.clearInterval(timer); }, [accessToken, selectedId]);
+  const selected = sessions.find((session) => session.id === selectedId);
+  const transition = async (action: "start" | "finalize") => {
+    if (!selected) return; setSaving(true); setError("");
+    try { const response = await fetch(`${API}/sessions/${selected.id}/${action}`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Status sesi tidak dapat diubah."); } await load(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); }
+  };
   return <>
-    <section className="page-intro"><div><p className="eyebrow">LIVE MONITORING</p><h2>Menunggu sesi dari perangkat</h2><p>Grafik aktif setelah firmware memulai pemeriksaan. Dashboard tidak dapat menggerakkan motor.</p></div><Status online={false} /></section>
+    <section className="page-intro"><div><p className="eyebrow">LIVE MONITORING</p><h2>{selected ? selected.session_code : "Menunggu sesi dari perangkat"}</h2><p>{selected ? `${selected.subject_code} · ${selected.modules.join(" + ")}` : "Siapkan pemeriksaan baru untuk memulai."}</p></div><span className={`session-state ${selected?.status ?? "none"}`}>{selected?.status ?? "Tidak ada sesi"}</span></section>
+    <section className="monitor-session-bar"><label htmlFor="monitor-session">Sesi</label><select id="monitor-session" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}><option value="">Pilih sesi…</option>{sessions.map((session) => <option key={session.id} value={session.id}>{session.session_code} · {session.subject_code} · {session.status}</option>)}</select>{role !== "researcher" && selected?.status === "prepared" && <button className="primary" disabled={saving} onClick={() => transition("start")}>Tandai mulai</button>}{role !== "researcher" && selected?.status === "active" && <button className="danger-button" disabled={saving} onClick={() => transition("finalize")}>Selesaikan sesi</button>}</section>
+    {error && <p className="form-error" role="alert">{error}</p>}
     <section className="monitor-layout">
       <article className="panel chart-panel">
         <div className="panel-title"><div><p className="eyebrow">TEKANAN LIDAH</p><h3>FSR channel 1</h3></div><span className="unit">kPa · 100 Hz</span></div>
         <div className="chart-empty" role="img" aria-label="Pratinjau grafik tekanan lidah. Belum ada sesi aktif.">
           <svg viewBox="0 0 800 250" preserveAspectRatio="none" aria-hidden="true"><path className="grid" d="M0 50H800M0 100H800M0 150H800M0 200H800"/><polyline points={points.map((y, i) => `${i * 42},${230-y*2.4}`).join(" ")} /></svg>
-          <div><strong>Belum ada data langsung</strong><span>Mulai pemeriksaan dari LCD perangkat.</span></div>
+          <div><strong>{selected?.status === "active" ? "Sesi aktif — menunggu batch HTTPS" : "Belum ada data langsung"}</strong><span>{selected?.status === "active" ? "Data akan muncul setelah firmware mengirim batch pertama." : "Mulai pemeriksaan dari LCD perangkat."}</span></div>
         </div>
-        <p className="chart-summary">Ringkasan aksesibel: tidak ada sampel yang diterima pada sesi ini.</p>
+        <p className="chart-summary">Ringkasan aksesibel: {selected ? `sesi ${selected.session_code} berstatus ${selected.status}` : "tidak ada sesi dipilih"}. Belum ada sampel untuk ditampilkan.</p>
       </article>
       <aside className="panel side-panel">
         <p className="eyebrow">KANAL FIRMWARE</p><h3>Yang dapat dimonitor</h3>
