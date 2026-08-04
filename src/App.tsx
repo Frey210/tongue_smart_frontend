@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 type Screen = "dashboard" | "monitoring" | "devices" | "users";
 type Role = "admin" | "operator" | "researcher";
 type User = { id: string; email: string; full_name: string; role: Role; is_active: boolean };
+type RegistrationRequest = { id: string; email: string; full_name: string; institution: string; status: string; created_at: string };
 type AuthSession = { access_token: string; refresh_token: string; expires_in: number; user: User };
 type Device = {
   device_id: string;
@@ -146,56 +147,67 @@ export function App() {
 }
 
 function Login({ onAuthenticated }: { onAuthenticated: (session: AuthSession) => void }) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [institution, setInstitution] = useState("FKG — Departemen Kedokteran Gigi Anak");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
   const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setError("");
-    setLoading(true);
+    event.preventDefault(); setError(""); setSuccess(""); setLoading(true);
     try {
-      const response = await fetch(`${API}/auth/login`, {
+      const response = await fetch(`${API}/auth/${mode === "login" ? "login" : "register"}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(mode === "login" ? { email, password } : { full_name: fullName, email, password, institution }),
       });
-      if (!response.ok) throw new Error("Email atau password tidak valid.");
-      onAuthenticated(await response.json() as AuthSession);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Login gagal. Coba kembali.");
-    } finally { setLoading(false); }
+      if (!response.ok) { const body = await response.json().catch(() => ({})) as { detail?: string }; throw new Error(body.detail ?? "Permintaan tidak dapat diproses."); }
+      if (mode === "login") onAuthenticated(await response.json() as AuthSession);
+      else { setSuccess("Pendaftaran berhasil dikirim. Admin akan meninjau akun Anda sebelum akun dapat digunakan."); setFullName(""); setEmail(""); setPassword(""); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Permintaan gagal. Coba kembali."); }
+    finally { setLoading(false); }
   };
 
-  return <main className="login-page">
-    <section className="login-panel" aria-labelledby="login-title">
-      <div className="brand-mark"><span>TS</span><div>Tongue Smart<small>Research Dashboard</small></div></div>
-      <div><p className="eyebrow">AKSES TERLINDUNGI</p><h1 id="login-title">Masuk ke workspace riset</h1><p>Gunakan akun yang diberikan administrator sistem.</p></div>
-      <form onSubmit={submit}>
-        <label htmlFor="email">Email</label>
-        <input id="email" type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} />
-        <label htmlFor="password">Password</label>
-        <input id="password" type="password" autoComplete="current-password" minLength={10} required value={password} onChange={(event) => setPassword(event.target.value)} />
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="primary" type="submit" disabled={loading}>{loading ? "Memeriksa…" : "Masuk"}</button>
-      </form>
-      <p className="research-disclaimer">Khusus kegiatan penelitian. Bukan untuk diagnosis klinis mandiri.</p>
+  const switchMode = (next: "login" | "register") => { setMode(next); setError(""); setSuccess(""); };
+
+  return <main className="auth-layout">
+    <section className="auth-story" aria-label="Tongue Smart Research Dashboard">
+      <div className="auth-brand"><span className="auth-logo">⊕</span><div><strong>Tongue Smart</strong><small>RESEARCH PLATFORM</small></div></div>
+      <div className="auth-message"><h1>Tongue Smart Research<br />Dashboard</h1><p>Pemantauan terintegrasi aktivitas otot orofasial, tekanan lidah, dan gaya bibir.</p><div className="sensor-tags"><span>sEMG · µV</span><span>Tekanan Lidah · kPa</span><span>Gaya Bibir · N</span></div></div>
+      <footer>Fakultas Kedokteran Gigi · Laboratorium Biomedik<br />Tongue Smart MVP v0.9.2 · 2026</footer>
     </section>
+    <section className="auth-form-side"><div className="auth-form-wrap">
+      <p className="prototype-pill"><i /> Prototipe Riset — Bukan untuk Diagnosis Klinis Mandiri</p>
+      <div className="auth-tabs" role="tablist" aria-label="Pilihan akses akun"><button type="button" role="tab" aria-selected={mode === "login"} onClick={() => switchMode("login")}>Masuk</button><button type="button" role="tab" aria-selected={mode === "register"} onClick={() => switchMode("register")}>Daftar akun</button></div>
+      <h2 id="auth-title">{mode === "login" ? "Masuk ke Dashboard" : "Daftar akun penelitian"}</h2>
+      <p className="auth-description">{mode === "login" ? "Gunakan akun institusi yang terdaftar pada studi." : "Kirim data akun untuk ditinjau dan disetujui oleh admin."}</p>
+      <form onSubmit={submit} aria-labelledby="auth-title">
+        {mode === "register" && <><label htmlFor="full-name">Nama Lengkap</label><input id="full-name" autoComplete="name" minLength={2} required value={fullName} onChange={(event) => setFullName(event.target.value)} /></>}
+        <label htmlFor="email">Email atau Nama Pengguna</label><input id="email" type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} />
+        <label htmlFor="password">Kata Sandi</label><input id="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={10} required value={password} onChange={(event) => setPassword(event.target.value)} />
+        {mode === "register" && <><label htmlFor="institution">Institusi</label><select id="institution" value={institution} onChange={(event) => setInstitution(event.target.value)}><option>FKG — Departemen Kedokteran Gigi Anak</option><option>Laboratorium Biomedik</option><option>Institusi mitra penelitian</option></select></>}
+        {error && <p className="form-error" role="alert">{error}</p>}{success && <p className="form-success" role="status">{success}</p>}
+        <button className="primary auth-submit" type="submit" disabled={loading}>{loading ? "Memproses…" : mode === "login" ? "Masuk" : "Kirim pendaftaran"}</button>
+      </form>
+      <p className="research-disclaimer">Sistem ini merekam, menyusun, menampilkan, dan mengekspor data sensor untuk keperluan penelitian. Sistem tidak melakukan klasifikasi maloklusi, diagnosis, maupun rekomendasi perawatan.</p>
+    </div></section>
   </main>;
 }
 
 function Users({ accessToken, onUnauthorized }: { accessToken: string; onUnauthorized: () => void }) {
   const [users, setUsers] = useState<User[]>([]);
+  const [requests, setRequests] = useState<RegistrationRequest[]>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ full_name: "", email: "", role: "operator" as Role, password: "" });
 
-  const loadUsers = () => fetch(`${API}/users`, { headers: { Authorization: `Bearer ${accessToken}` } })
-    .then((response) => {
-      if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir. Silakan masuk kembali."); }
-      if (!response.ok) throw new Error("Daftar pengguna tidak dapat dimuat.");
-      return response.json() as Promise<User[]>;
-    }).then(setUsers).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."));
+  const loadUsers = () => Promise.all(["users", "registration-requests"].map((path) => fetch(`${API}/${path}`, { headers: { Authorization: `Bearer ${accessToken}` } }).then((response) => {
+    if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir. Silakan masuk kembali."); }
+    if (!response.ok) throw new Error("Data pengguna tidak dapat dimuat.");
+    return response.json();
+  }))).then(([userData, requestData]) => { setUsers(userData as User[]); setRequests(requestData as RegistrationRequest[]); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."));
 
   useEffect(() => { loadUsers(); }, [accessToken]);
 
@@ -219,9 +231,23 @@ function Users({ accessToken, onUnauthorized }: { accessToken: string; onUnautho
     finally { setSaving(false); }
   };
 
+  const approve = async (id: string) => {
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`${API}/registration-requests/${id}/approve`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Pendaftaran tidak dapat disetujui."); }
+      await loadUsers();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); }
+    finally { setSaving(false); }
+  };
+
   return <>
     <section className="page-intro"><div><p className="eyebrow">ADMINISTRATION</p><h2>Pengguna dan peran</h2><p>Admin mengatur akses. Otorisasi tetap diverifikasi oleh backend.</p></div></section>
     <section className="grid-two user-grid">
+      <article className="panel registration-panel"><div className="panel-title"><div><p className="eyebrow">PERLU PERSETUJUAN</p><h3>Pendaftaran masuk</h3></div><span className="request-count">{requests.length}</span></div>
+        <div className="registration-list">{requests.map((request) => <div key={request.id}><div><strong>{request.full_name}</strong><span>{request.email} · {request.institution}</span></div><button type="button" className="secondary" disabled={saving} onClick={() => approve(request.id)}>Setujui sebagai operator</button></div>)}</div>
+        {requests.length === 0 && <p className="empty-state">Tidak ada pendaftaran yang menunggu.</p>}
+      </article>
       <article className="panel">
         <p className="eyebrow">AKUN BARU</p><h3>Tambahkan pengguna</h3>
         <form className="stack-form" onSubmit={submit}>
