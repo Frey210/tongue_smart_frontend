@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 
-type Screen = "dashboard" | "monitoring" | "devices" | "users";
+type Screen = "dashboard" | "subjects" | "monitoring" | "devices" | "users";
 type Role = "admin" | "operator" | "researcher";
 type User = { id: string; email: string; full_name: string; role: Role; is_active: boolean };
 type RegistrationRequest = { id: string; email: string; full_name: string; institution: string; status: string; created_at: string };
+type Subject = { id: string; subject_code: string; initials: string; research_group: string; year_of_birth: number | null; consent_status: "pending" | "granted" | "withdrawn"; notes: string; is_active: boolean; created_at: string };
 type AuthSession = { access_token: string; refresh_token: string; expires_in: number; user: User };
 type Device = {
   device_id: string;
@@ -23,6 +24,7 @@ type Summary = {
   pending_sync: number;
   completed_sessions: number;
   last_calibration: string | null;
+  subject_count: number;
 };
 
 const API = import.meta.env.VITE_API_URL ?? "/api/v1";
@@ -45,6 +47,7 @@ const fallbackDevice: Device = {
 function Icon({ name }: { name: Screen }) {
   const paths = {
     dashboard: "M4 5h6v6H4zM14 5h6v10h-6zM4 15h6v4H4zM14 19h6",
+    subjects: "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11A3.5 3.5 0 1 0 9.5 4a3.5 3.5 0 0 0 0 7Z",
     monitoring: "M3 13h4l2-7 4 12 3-9 2 4h3",
     devices: "M7 4h10a2 2 0 0 1 2 2v12H5V6a2 2 0 0 1 2-2Zm3 5h4v4h-4z",
     users: "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11A3.5 3.5 0 1 0 9.5 4a3.5 3.5 0 0 0 0 7ZM17 11a3 3 0 0 0 0-6M19 14a4 4 0 0 1 3 4",
@@ -63,7 +66,7 @@ export function App() {
   });
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [device, setDevice] = useState<Device>(fallbackDevice);
-  const [summary, setSummary] = useState<Summary>({ device_status: "offline", pending_sync: 0, completed_sessions: 0, last_calibration: null });
+  const [summary, setSummary] = useState<Summary>({ device_status: "offline", pending_sync: 0, completed_sessions: 0, subject_count: 0, last_calibration: null });
   const [apiOnline, setApiOnline] = useState(false);
 
   const saveAuth = (session: AuthSession | null) => {
@@ -111,6 +114,7 @@ export function App() {
 
   const screens: { id: Screen; label: string }[] = [
     { id: "dashboard", label: "Dashboard" },
+    { id: "subjects", label: "Subjek" },
     { id: "monitoring", label: "Monitoring" },
     { id: "devices", label: "Perangkat" },
     ...(auth.user.role === "admin" ? [{ id: "users" as Screen, label: "Pengguna" }] : []),
@@ -138,6 +142,7 @@ export function App() {
         </header>
 
         {screen === "dashboard" && <Dashboard device={device} summary={summary} apiOnline={apiOnline} onOpenDevice={() => setScreen("devices")} />}
+        {screen === "subjects" && <Subjects accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
         {screen === "monitoring" && <Monitoring device={device} />}
         {screen === "devices" && <Devices device={device} apiOnline={apiOnline} />}
         {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
@@ -194,6 +199,55 @@ function Login({ onAuthenticated }: { onAuthenticated: (session: AuthSession) =>
       <p className="research-disclaimer">Sistem ini merekam, menyusun, menampilkan, dan mengekspor data sensor untuk keperluan penelitian. Sistem tidak melakukan klasifikasi maloklusi, diagnosis, maupun rekomendasi perawatan.</p>
     </div></section>
   </main>;
+}
+
+function Subjects({ accessToken, role, onUnauthorized }: { accessToken: string; role: Role; onUnauthorized: () => void }) {
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ subject_code: "", initials: "", research_group: "", year_of_birth: "", consent_status: "pending" as Subject["consent_status"], notes: "" });
+
+  const loadSubjects = async () => {
+    try {
+      const params = new URLSearchParams(); if (search) params.set("search", search); if (filter) params.set("consent_status", filter);
+      const response = await fetch(`${API}/subjects?${params}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir. Silakan masuk kembali."); }
+      if (!response.ok) throw new Error("Daftar subjek tidak dapat dimuat.");
+      setSubjects(await response.json() as Subject[]); setError("");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); }
+  };
+
+  useEffect(() => { const timer = window.setTimeout(loadSubjects, 250); return () => window.clearTimeout(timer); }, [accessToken, search, filter]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setSaving(true); setError("");
+    try {
+      const response = await fetch(`${API}/subjects`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ ...form, year_of_birth: form.year_of_birth ? Number(form.year_of_birth) : null }) });
+      if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Subjek tidak dapat disimpan."); }
+      setForm({ subject_code: "", initials: "", research_group: "", year_of_birth: "", consent_status: "pending", notes: "" }); await loadSubjects();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); }
+    finally { setSaving(false); }
+  };
+
+  const canEdit = role !== "researcher";
+  return <>
+    <section className="page-intro"><div><p className="eyebrow">RESEARCH SUBJECTS</p><h2>Subjek penelitian terkode</h2><p>Gunakan kode riset. Jangan masukkan nama lengkap atau identitas langsung pasien.</p></div><span className="subject-total">{subjects.length} subjek</span></section>
+    <section className="subject-toolbar" aria-label="Filter subjek"><input aria-label="Cari subjek" placeholder="Cari kode, inisial, atau kelompok…" value={search} onChange={(event) => setSearch(event.target.value)} /><select aria-label="Filter consent" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="">Semua status consent</option><option value="pending">Menunggu</option><option value="granted">Disetujui</option><option value="withdrawn">Ditarik</option></select></section>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <section className={`subject-layout ${canEdit ? "" : "read-only"}`}>
+      {canEdit && <article className="panel"><p className="eyebrow">SUBJEK BARU</p><h3>Daftarkan subjek</h3><form className="stack-form" onSubmit={submit}>
+        <label htmlFor="subject-code">Kode subjek</label><input id="subject-code" required pattern="[A-Za-z0-9_-]+" placeholder="TS-2026-001" value={form.subject_code} onChange={(event) => setForm({ ...form, subject_code: event.target.value })} />
+        <div className="form-row"><div><label htmlFor="initials">Inisial</label><input id="initials" required maxLength={12} placeholder="AN" value={form.initials} onChange={(event) => setForm({ ...form, initials: event.target.value })} /></div><div><label htmlFor="birth-year">Tahun lahir</label><input id="birth-year" type="number" min="1900" max={new Date().getFullYear()} placeholder="2015" value={form.year_of_birth} onChange={(event) => setForm({ ...form, year_of_birth: event.target.value })} /></div></div>
+        <label htmlFor="research-group">Kelompok penelitian</label><input id="research-group" required placeholder="Kelompok kontrol" value={form.research_group} onChange={(event) => setForm({ ...form, research_group: event.target.value })} />
+        <label htmlFor="consent-status">Status consent</label><select id="consent-status" value={form.consent_status} onChange={(event) => setForm({ ...form, consent_status: event.target.value as Subject["consent_status"] })}><option value="pending">Menunggu persetujuan</option><option value="granted">Telah disetujui</option><option value="withdrawn">Ditarik</option></select>
+        <label htmlFor="subject-notes">Catatan non-identitas</label><textarea id="subject-notes" rows={3} maxLength={2000} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+        <button className="primary" disabled={saving}>{saving ? "Menyimpan…" : "Simpan subjek"}</button>
+      </form></article>}
+      <article className="panel subject-directory"><p className="eyebrow">DIRECTORY</p><h3>Daftar subjek</h3><div className="subject-list">{subjects.map((subject) => <div key={subject.id}><div className="subject-code"><strong>{subject.subject_code}</strong><span>{subject.initials} · {subject.research_group}</span></div><span>{subject.year_of_birth ?? "Tahun tidak dicatat"}</span><span className={`consent ${subject.consent_status}`}>{subject.consent_status === "granted" ? "Disetujui" : subject.consent_status === "withdrawn" ? "Ditarik" : "Menunggu"}</span></div>)}</div>{subjects.length === 0 && !error && <p className="empty-state">Belum ada subjek yang sesuai filter.</p>}</article>
+    </section>
+  </>;
 }
 
 function Users({ accessToken, onUnauthorized }: { accessToken: string; onUnauthorized: () => void }) {
@@ -275,8 +329,8 @@ function Dashboard({ device, summary, apiOnline, onOpenDevice }: { device: Devic
     </section>
     {!apiOnline && <div className="notice" role="status"><strong>Backend belum terhubung.</strong><span>Menampilkan capability firmware lokal yang terakhir diketahui.</span></div>}
     <section className="metrics" aria-label="Ringkasan sistem">
+      <Metric label="Subjek aktif" value={String(summary.subject_count)} detail="Data terkode di PostgreSQL" />
       <Metric label="Sesi selesai" value={String(summary.completed_sessions)} detail="Belum ada rekaman server" />
-      <Metric label="Menunggu sinkron" value={String(summary.pending_sync)} detail="Data lokal tetap aman" />
       <Metric label="Kanal aktif" value={String(device.emg_channels + device.tongue_pressure_channels + (device.lip_force ? 1 : 0))} detail="1 EMG · 1 tekanan · 1 gaya" />
       <Metric label="Kalibrasi" value={summary.last_calibration ? "Valid" : "Belum"} detail={summary.last_calibration ?? "Diperlukan sebelum uji"} warning={!summary.last_calibration} />
     </section>
