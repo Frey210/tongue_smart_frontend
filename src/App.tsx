@@ -84,10 +84,12 @@ export function App() {
     let active = true;
     const refresh = () => Promise.all([
       fetch(`${API}/devices/current`, { headers: { Authorization: `Bearer ${auth.access_token}` } }).then((r) => {
+        if (r.status === 401) { saveAuth(null); throw new Error("session expired"); }
         if (!r.ok) throw new Error("device request failed");
         return r.json() as Promise<Device>;
       }),
       fetch(`${API}/dashboard/summary`, { headers: { Authorization: `Bearer ${auth.access_token}` } }).then((r) => {
+        if (r.status === 401) { saveAuth(null); throw new Error("session expired"); }
         if (!r.ok) throw new Error("summary request failed");
         return r.json() as Promise<Summary>;
       }),
@@ -137,7 +139,7 @@ export function App() {
         {screen === "dashboard" && <Dashboard device={device} summary={summary} apiOnline={apiOnline} onOpenDevice={() => setScreen("devices")} />}
         {screen === "monitoring" && <Monitoring device={device} />}
         {screen === "devices" && <Devices device={device} apiOnline={apiOnline} />}
-        {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} />}
+        {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
       </main>
     </div>
   );
@@ -182,7 +184,7 @@ function Login({ onAuthenticated }: { onAuthenticated: (session: AuthSession) =>
   </main>;
 }
 
-function Users({ accessToken }: { accessToken: string }) {
+function Users({ accessToken, onUnauthorized }: { accessToken: string; onUnauthorized: () => void }) {
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -190,6 +192,7 @@ function Users({ accessToken }: { accessToken: string }) {
 
   const loadUsers = () => fetch(`${API}/users`, { headers: { Authorization: `Bearer ${accessToken}` } })
     .then((response) => {
+      if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir. Silakan masuk kembali."); }
       if (!response.ok) throw new Error("Daftar pengguna tidak dapat dimuat.");
       return response.json() as Promise<User[]>;
     }).then(setUsers).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."));
@@ -205,6 +208,7 @@ function Users({ accessToken }: { accessToken: string }) {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify(form),
       });
+      if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir. Silakan masuk kembali."); }
       if (!response.ok) {
         const body = await response.json() as { detail?: string };
         throw new Error(body.detail ?? "Pengguna tidak dapat dibuat.");
