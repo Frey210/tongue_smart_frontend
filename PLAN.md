@@ -43,6 +43,7 @@ src/
 - Dashboard ringkasan.
 - CRUD subjek terkode dan status consent.
 - Wizard lima langkah dengan validasi capability perangkat.
+- Registry perangkat, claim melalui pairing code, status online/offline, dan pemilihan device pada wizard.
 
 ### F3 — Live monitoring
 

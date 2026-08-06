@@ -11,7 +11,14 @@ type SessionResults = { session: ExaminationSession; control: SessionControl | n
 type ExportJob = { id: string; session_ids: string[]; data_mode: string; include_metadata: boolean; include_markers: boolean; status: string; row_count: number; checksum: string; filename: string; created_at: string };
 type AuthSession = { access_token: string; refresh_token: string; expires_in: number; user: User };
 type Device = {
+  id: string;
   device_id: string;
+  hardware_uid: string;
+  display_name: string;
+  owner_id: string | null;
+  registered_at: string | null;
+  credential_hint: string | null;
+  legacy: boolean;
   firmware_version: string;
   connection: string;
   transport: string[];
@@ -35,7 +42,14 @@ const API = import.meta.env.VITE_API_URL ?? "/api/v1";
 const AUTH_KEY = "tongue-smart-auth";
 
 const fallbackDevice: Device = {
+  id: "legacy-tongue-smart-v3",
   device_id: "tongue-smart-v3",
+  hardware_uid: "legacy-unprovisioned",
+  display_name: "Tongue Smart v3",
+  owner_id: null,
+  registered_at: null,
+  credential_hint: null,
+  legacy: true,
   firmware_version: "0.2.0",
   connection: "offline",
   transport: ["usb_serial", "http", "https"],
@@ -74,6 +88,8 @@ export function App() {
   });
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [device, setDevice] = useState<Device>(fallbackDevice);
+  const [devices, setDevices] = useState<Device[]>([fallbackDevice]);
+  const [deviceRefreshKey, setDeviceRefreshKey] = useState(0);
   const [summary, setSummary] = useState<Summary>({ device_status: "offline", pending_sync: 0, completed_sessions: 0, subject_count: 0, last_calibration: null });
   const [apiOnline, setApiOnline] = useState(false);
   const [resultSessionId, setResultSessionId] = useState("");
@@ -96,19 +112,20 @@ export function App() {
     if (!auth) return;
     let active = true;
     const refresh = () => Promise.all([
-      fetch(`${API}/devices/current`, { headers: { Authorization: `Bearer ${auth.access_token}` } }).then((r) => {
+      fetch(`${API}/devices`, { headers: { Authorization: `Bearer ${auth.access_token}` } }).then((r) => {
         if (r.status === 401) { saveAuth(null); throw new Error("session expired"); }
         if (!r.ok) throw new Error("device request failed");
-        return r.json() as Promise<Device>;
+        return r.json() as Promise<Device[]>;
       }),
       fetch(`${API}/dashboard/summary`, { headers: { Authorization: `Bearer ${auth.access_token}` } }).then((r) => {
         if (r.status === 401) { saveAuth(null); throw new Error("session expired"); }
         if (!r.ok) throw new Error("summary request failed");
         return r.json() as Promise<Summary>;
       }),
-    ]).then(([nextDevice, nextSummary]) => {
+    ]).then(([nextDevices, nextSummary]) => {
       if (!active) return;
-      setDevice(nextDevice);
+      setDevices(nextDevices);
+      setDevice(nextDevices[0] ?? fallbackDevice);
       setSummary(nextSummary);
       setApiOnline(true);
     }).catch(() => {
@@ -117,7 +134,7 @@ export function App() {
     refresh();
     const timer = window.setInterval(refresh, 5000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [auth]);
+  }, [auth, deviceRefreshKey]);
 
   if (!auth) return <Login onAuthenticated={saveAuth} />;
 
@@ -156,12 +173,12 @@ export function App() {
 
         {screen === "dashboard" && <Dashboard device={device} summary={summary} apiOnline={apiOnline} onOpenDevice={() => setScreen("devices")} />}
         {screen === "subjects" && <Subjects accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
-        {screen === "examination" && auth.user.role !== "researcher" && <ExaminationWizard accessToken={auth.access_token} device={device} onUnauthorized={() => saveAuth(null)} onPrepared={() => setScreen("monitoring")} />}
+        {screen === "examination" && auth.user.role !== "researcher" && <ExaminationWizard accessToken={auth.access_token} devices={devices} onUnauthorized={() => saveAuth(null)} onPrepared={() => setScreen("monitoring")} />}
         {screen === "monitoring" && <Monitoring device={device} accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
         {screen === "results" && <Results accessToken={auth.access_token} role={auth.user.role} initialSessionId={resultSessionId} onUnauthorized={() => saveAuth(null)} />}
         {screen === "history" && <History accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} onView={(id) => { setResultSessionId(id); setScreen("results"); }} />}
         {screen === "exports" && <Exports accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
-        {screen === "devices" && <Devices device={device} apiOnline={apiOnline} />}
+        {screen === "devices" && <Devices devices={devices} accessToken={auth.access_token} role={auth.user.role} apiOnline={apiOnline} onUnauthorized={() => saveAuth(null)} onChanged={() => setDeviceRefreshKey((value) => value + 1)} />}
         {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
       </main>
     </div>
@@ -218,7 +235,7 @@ function Login({ onAuthenticated }: { onAuthenticated: (session: AuthSession) =>
   </main>;
 }
 
-function ExaminationWizard({ accessToken, device, onUnauthorized, onPrepared }: { accessToken: string; device: Device; onUnauthorized: () => void; onPrepared: () => void }) {
+function ExaminationWizard({ accessToken, devices, onUnauthorized, onPrepared }: { accessToken: string; devices: Device[]; onUnauthorized: () => void; onPrepared: () => void }) {
   const [step, setStep] = useState(1);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [subjectId, setSubjectId] = useState("");
@@ -229,6 +246,12 @@ function ExaminationWizard({ accessToken, device, onUnauthorized, onPrepared }: 
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [prepared, setPrepared] = useState<ExaminationSession | null>(null);
+  const [deviceId, setDeviceId] = useState(devices[0]?.device_id ?? "");
+  const device = devices.find((item) => item.device_id === deviceId) ?? devices[0] ?? fallbackDevice;
+
+  useEffect(() => {
+    if (!devices.some((item) => item.device_id === deviceId)) setDeviceId(devices[0]?.device_id ?? "");
+  }, [devices, deviceId]);
 
   useEffect(() => { fetch(`${API}/subjects?consent_status=granted`, { headers: { Authorization: `Bearer ${accessToken}` } }).then((response) => {
     if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir."); }
@@ -243,7 +266,7 @@ function ExaminationWizard({ accessToken, device, onUnauthorized, onPrepared }: 
   const stageOptions = [{ id: "rest", label: "Posisi istirahat", duration: "30 dtk" }, { id: "mouth_close", label: "Menutup mulut", duration: "15 dtk" }, { id: "clench", label: "Menggigit (clenching)", duration: "3 × 10 dtk" }, { id: "tongue_press", label: "Tekanan lidah bergiliran", duration: "5 titik" }, { id: "lip_pull", label: "Tarikan gaya bibir", duration: "2 ulangan" }];
   const selectedSubject = subjects.find((subject) => subject.id === subjectId);
   const checks = [{ label: "Perangkat terdaftar", ok: Boolean(device.device_id) }, { label: "Capability sensor tersedia", ok: modules.length > 0 }, { label: "Penyimpanan lokal", ok: true }, { label: "Kalibrasi", ok: true }, { label: "Koneksi internet", ok: device.connection === "online", optional: true }];
-  const canContinue = step === 1 ? Boolean(subjectId) : step === 2 ? modules.length > 0 && (!modules.includes("emg") || (Boolean(electrodeSite) && (electrodeSite !== "other" || Boolean(electrodeNote.trim())))) : step === 4 ? stages.length > 0 : true;
+  const canContinue = step === 1 ? Boolean(subjectId) : step === 2 ? modules.length > 0 && (!modules.includes("emg") || (Boolean(electrodeSite) && (electrodeSite !== "other" || Boolean(electrodeNote.trim())))) : step === 3 ? Boolean(deviceId) : step === 4 ? stages.length > 0 : true;
   const toggle = (value: string, current: string[], setter: (next: string[]) => void) => setter(current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
 
   const prepare = async () => {
@@ -265,7 +288,7 @@ function ExaminationWizard({ accessToken, device, onUnauthorized, onPrepared }: 
     <section className="panel wizard-card">
       {step === 1 && <div><p className="eyebrow">LANGKAH 1</p><h3>Pilih subjek dengan consent aktif</h3><div className="choice-list">{subjects.map((subject) => <button type="button" key={subject.id} className={subjectId === subject.id ? "selected" : ""} onClick={() => setSubjectId(subject.id)}><span className="avatar">{subject.initials}</span><span><strong>{subject.subject_code}</strong><small>{subject.research_group} · consent disetujui</small></span><i>{subjectId === subject.id ? "Dipilih" : "Pilih"}</i></button>)}</div>{subjects.length === 0 && <p className="empty-state">Belum ada subjek dengan consent disetujui. Buka halaman Subjek untuk memperbarui consent.</p>}</div>}
       {step === 2 && <div><p className="eyebrow">LANGKAH 2</p><h3>Pilih modul pengukuran</h3><div className="module-options">{moduleOptions.map((item) => <button type="button" key={item.id} disabled={!item.available} className={modules.includes(item.id) ? "selected" : ""} onClick={() => toggle(item.id, modules, setModules)}><strong>{item.label}</strong><span>{item.detail}</span><small>{item.available ? modules.includes(item.id) ? "Aktif" : "Tersedia" : "Tidak dilaporkan firmware"}</small></button>)}</div>{modules.includes("emg") && <div className="emg-placement"><label htmlFor="electrode-site">Posisi pemasangan elektroda EMG</label><select id="electrode-site" required value={electrodeSite} onChange={(event) => setElectrodeSite(event.target.value)}><option value="">Pilih posisi…</option><option value="masseter_left">Masseter kiri</option><option value="masseter_right">Masseter kanan</option><option value="temporalis_left">Temporalis kiri</option><option value="temporalis_right">Temporalis kanan</option><option value="other">Lokasi lainnya</option></select>{electrodeSite === "other" && <><label htmlFor="electrode-note">Keterangan lokasi</label><input id="electrode-note" required value={electrodeNote} onChange={(event) => setElectrodeNote(event.target.value)} /></>}</div>}</div>}
-      {step === 3 && <div><p className="eyebrow">LANGKAH 3</p><h3>Validasi perangkat dan sensor</h3><div className="device-checks">{checks.map((check) => <div key={check.label}><span className={check.ok ? "ok" : check.optional ? "optional" : "failed"}>{check.ok ? "✓" : check.optional ? "!" : "×"}</span><strong>{check.label}</strong><small>{check.ok ? "Lolos" : check.optional ? "Opsional — sesi tetap dapat disiapkan offline" : "Perlu diperiksa"}</small></div>)}</div><p className="security-note">Firmware tetap menjadi sumber kebenaran untuk kalibrasi dan keselamatan. Dashboard hanya menyiapkan metadata sesi.</p></div>}
+      {step === 3 && <div><p className="eyebrow">LANGKAH 3</p><h3>Pilih dan validasi perangkat</h3><label className="device-select-label" htmlFor="session-device">Perangkat untuk sesi ini</label><select id="session-device" value={deviceId} onChange={(event) => setDeviceId(event.target.value)}>{devices.map((item) => <option key={item.device_id} value={item.device_id}>{item.display_name} · {item.device_id} · {item.connection === "online" ? "online" : "offline"}</option>)}</select><div className="device-checks">{checks.map((check) => <div key={check.label}><span className={check.ok ? "ok" : check.optional ? "optional" : "failed"}>{check.ok ? "✓" : check.optional ? "!" : "×"}</span><strong>{check.label}</strong><small>{check.ok ? "Lolos" : check.optional ? "Opsional — sesi tetap dapat disiapkan offline" : "Perlu diperiksa"}</small></div>)}</div><p className="security-note">Sesi akan dikunci ke <strong>{device.display_name}</strong>. Data dari credential perangkat lain akan ditolak backend.</p></div>}
       {step === 4 && <div><p className="eyebrow">LANGKAH 4</p><h3>Pilih tahap protokol</h3><div className="protocol-list">{stageOptions.map((stage) => <label key={stage.id}><input type="checkbox" checked={stages.includes(stage.id)} onChange={() => toggle(stage.id, stages, setStages)} /><span><strong>{stage.label}</strong><small>{stage.duration}</small></span></label>)}</div></div>}
       {step === 5 && <div><p className="eyebrow">LANGKAH 5</p><h3>Konfirmasi sesi</h3><dl className="review-list"><div><dt>Subjek</dt><dd>{selectedSubject?.subject_code}</dd></div><div><dt>Perangkat</dt><dd>{device.device_id}</dd></div><div><dt>Modul</dt><dd>{modules.join(", ")}</dd></div>{modules.includes("emg") && <div><dt>Elektroda EMG</dt><dd>{electrodeSite.replaceAll("_", " ")}</dd></div>}<div><dt>Tahap protokol</dt><dd>{stages.length} tahap</dd></div><div><dt>Status awal</dt><dd>Prepared</dd></div></dl><p className="security-note">Membuat sesi tidak menyalakan sensor atau motor. Mulai akuisisi dari menu lokal perangkat.</p></div>}
       {error && <p className="form-error" role="alert">{error}</p>}
@@ -557,12 +580,32 @@ function TonguePointMap({ active, values }: { active: string; values: number[] }
   return <div className="tongue-map" aria-label={`Peta titik tekanan. Titik aktif ${active}`}><div className="palate-shape">{points.map(([id, label]) => <span key={id} className={`${id} ${active === id ? "active" : ""}`} title={id}>{label}<i>{active === id && peak ? peak.toFixed(1) : ""}</i></span>)}</div><small>Simulasi satu kanal FSR diukur bergiliran</small></div>;
 }
 
-function Devices({ device, apiOnline }: { device: Device; apiOnline: boolean }) {
+function Devices({ devices, accessToken, role, apiOnline, onUnauthorized, onChanged }: { devices: Device[]; accessToken: string; role: Role; apiOnline: boolean; onUnauthorized: () => void; onChanged: () => void }) {
+  const [pairingCode, setPairingCode] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const claim = async (event: FormEvent) => {
+    event.preventDefault(); setSaving(true); setError(""); setSuccess("");
+    try {
+      const response = await fetch(`${API}/devices/claim`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ pairing_code: pairingCode, display_name: displayName }) });
+      if (response.status === 401) { onUnauthorized(); throw new Error("Sesi berakhir."); }
+      if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Perangkat tidak dapat didaftarkan."); }
+      const claimed = await response.json() as Device;
+      setSuccess(`${claimed.display_name} berhasil didaftarkan.`); setPairingCode(""); setDisplayName(""); onChanged();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); }
+    finally { setSaving(false); }
+  };
+
+  const onlineCount = devices.filter((item) => item.connection === "online").length;
   return <>
-    <section className="page-intro"><div><p className="eyebrow">DEVICE MANAGEMENT</p><h2>{device.device_id}</h2><p>Firmware {device.firmware_version} · transport {device.transport.join(" + ")}</p></div><Status online={apiOnline && device.connection === "online"} /></section>
-    <section className="grid-two">
-      <article className="panel"><p className="eyebrow">KONEKSI WIFI</p><h3>Portal konfigurasi dari LCD</h3><div className="steps"><p><b>1</b>Pada LCD buka <strong>Settings</strong>.</p><p><b>2</b>Pilih <strong>WiFi Setup</strong> lalu tekan OK.</p><p><b>3</b>Hubungkan ponsel ke AP <code>TongueSmart-Setup</code>.</p><p><b>4</b>Pilih WiFi dan simpan. Perangkat kembali ke Home.</p></div><div className="security-note">Password WiFi disimpan pada NVS perangkat, tidak dikirim ke dashboard.</div></article>
-      <article className="panel"><p className="eyebrow">TRANSPORT</p><h3>HTTP/HTTPS tahap awal</h3><dl className="specs"><div><dt>USB serial</dt><dd>Aktif</dd></div><div><dt>HTTP sync</dt><dd>{device.connection === "online" ? "Aktif" : "Menunggu perangkat"}</dd></div><div><dt>Terakhir terlihat</dt><dd>{device.last_seen_at ? new Date(device.last_seen_at).toLocaleString("id-ID") : "Belum pernah"}</dd></div><div><dt>WiFi portal</dt><dd>{device.wifi_portal ? "Tersedia" : "Tidak ada"}</dd></div><div><dt>MQTT</dt><dd>Ditunda</dd></div><div><dt>Remote motor</dt><dd>Tidak diizinkan</dd></div></dl></article>
+    <section className="page-intro"><div><p className="eyebrow">DEVICE MANAGEMENT</p><h2>Perangkat penelitian</h2><p>{devices.length} perangkat tersedia · {onlineCount} sedang online</p></div><Status online={apiOnline && onlineCount > 0} /></section>
+    <section className="device-management-layout">
+      {role !== "researcher" && <article className="panel device-claim-panel"><p className="eyebrow">PAIRING PERANGKAT</p><h3>Daftarkan ke akun</h3><p className="panel-copy">Masukkan kode yang tampil pada LCD atau terminal simulator. Kode berlaku selama 10 menit.</p><form onSubmit={claim}><label htmlFor="pairing-code">Kode pairing</label><input id="pairing-code" required minLength={6} maxLength={16} placeholder="TS-ABC234" value={pairingCode} onChange={(event) => setPairingCode(event.target.value.toUpperCase())} /><label htmlFor="device-name">Nama perangkat</label><input id="device-name" required minLength={2} maxLength={120} placeholder="Tongue Smart Lab 01" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />{error && <p className="form-error" role="alert">{error}</p>}{success && <p className="form-success" role="status">{success}</p>}<button className="primary" disabled={saving}>{saving ? "Mendaftarkan…" : "Daftarkan perangkat"}</button></form><div className="security-note">Setiap perangkat menggunakan secret unik. Dashboard hanya menampilkan enam karakter petunjuk dan tidak menyimpan secret dalam bentuk terbaca.</div></article>}
+      <article className="panel device-registry"><div className="panel-title"><div><p className="eyebrow">REGISTRY</p><h3>Perangkat terdaftar</h3></div><span className="subject-total">{devices.length} unit</span></div><div className="device-card-list">{devices.map((item) => <div className="device-card" key={item.device_id}><div className="device-card-head"><span className="device-glyph" aria-hidden="true">TS</span><div><strong>{item.display_name}</strong><code>{item.device_id}</code></div><Status online={apiOnline && item.connection === "online"} /></div><dl><div><dt>Firmware</dt><dd>{item.firmware_version}</dd></div><div><dt>Hardware UID</dt><dd>{item.hardware_uid}</dd></div><div><dt>Credential</dt><dd>{item.legacy ? "Legacy bersama" : `••••••${item.credential_hint ?? ""}`}</dd></div><div><dt>Terakhir terlihat</dt><dd>{item.last_seen_at ? new Date(item.last_seen_at).toLocaleString("id-ID") : "Belum pernah"}</dd></div></dl>{item.legacy && <p className="device-warning">Mode kompatibilitas. Lakukan pairing agar perangkat memakai credential unik.</p>}</div>)}</div></article>
     </section>
+    <section className="panel wifi-guide"><p className="eyebrow">KONEKSI WIFI</p><h3>Portal konfigurasi dari LCD</h3><div className="steps"><p><b>1</b>Pada LCD buka <strong>Settings</strong>.</p><p><b>2</b>Pilih <strong>WiFi Setup</strong> lalu tekan OK.</p><p><b>3</b>Hubungkan ponsel ke AP <code>TongueSmart-Setup</code>.</p><p><b>4</b>Pilih WiFi dan simpan. Perangkat kembali ke Home.</p></div></section>
   </>;
 }
