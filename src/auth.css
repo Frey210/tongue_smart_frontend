@@ -276,3 +276,75 @@ body { background: #f1f5f9; }
   .user-list > div { grid-template-columns: 42px minmax(0, 1fr); }
   .role-badge { grid-column: 2; justify-self: start; }
 }
+
+/* App shell: independent navigation, responsive content, and safe text wrapping. */
+.app-shell > main aside.panel { display:block; padding:22px; color:var(--text); background:var(--surface) }
+.app-shell main *, .app-shell main *::before, .app-shell main *::after { min-width:0 }
+.panel-title, .monitor-session-bar, .measurement-controls, .result-controls { flex-wrap:wrap }
+.panel h1, .panel h2, .panel h3, .panel p, .panel span, .panel strong, .panel code,
+.metric span, .metric strong, .page-intro, .subject-list, .history-list, .export-list { overflow-wrap:anywhere }
+.app-shell > aside nav button { position:relative; overflow:hidden }
+.app-shell > aside nav button::after { content:""; position:absolute; inset:auto 12px 0; height:2px; border-radius:999px; background:#59d6d1; opacity:0; transform:scaleX(.35); transition:opacity 180ms ease, transform 180ms ease }
+.app-shell > aside nav button.active::after { opacity:1; transform:scaleX(1) }
+.app-shell > aside nav button svg { transition:transform 180ms ease, filter 180ms ease }
+.app-shell > aside nav button:hover svg, .app-shell > aside nav button.active svg { transform:translateY(-1px) scale(1.08); filter:drop-shadow(0 0 5px rgba(89,214,209,.35)) }
+.app-shell > main > section { animation:content-enter 260ms ease-out both }
+@keyframes content-enter { from { opacity:0; transform:translateY(5px) } to { opacity:1; transform:translateY(0) } }
+
+@media (min-width:761px) {
+  .app-shell { height:100dvh; min-height:0; overflow:hidden }
+  .app-shell > aside { height:100dvh; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin }
+  .app-shell > main { height:100dvh; overflow-y:auto; overscroll-behavior:contain; scroll-behavior:smooth }
+}
+@media (min-width:1024px) {
+  .live-side { align-self:start; position:sticky; top:18px }
+}
+@media (min-width:761px) and (max-width:1180px) {
+  .app-shell { grid-template-columns:96px minmax(0,1fr) }
+  .app-shell > aside { padding:22px 10px }
+  .brand-mark { justify-content:center }
+  .brand-mark > div, .scope-note { display:none }
+  .app-shell > aside nav { gap:8px; margin-top:28px }
+  .app-shell > aside nav button { min-height:64px; flex-direction:column; justify-content:center; gap:5px; padding:7px 4px; text-align:center; font-size:9px; line-height:1.15 }
+  .app-shell > aside nav button::after { inset-inline:20px }
+  .app-shell > main { padding:24px 22px 48px }
+  .live-monitor-grid { grid-template-columns:1fr }
+  .live-side { position:static }
+}
+@media (max-width:760px) {
+  .app-shell { display:block; min-height:100dvh; overflow:visible }
+  .app-shell > aside { width:100%; height:auto; padding:8px 10px 7px; overflow:hidden; border-bottom:1px solid rgba(139,229,229,.16); box-shadow:0 8px 26px rgba(6,31,55,.15) }
+  .app-shell > aside nav { display:flex; gap:4px; margin:0; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none; scroll-snap-type:x proximity }
+  .app-shell > aside nav::-webkit-scrollbar { display:none }
+  .app-shell > aside nav button { flex:0 0 82px; min-height:54px; flex-direction:column; justify-content:center; gap:3px; padding:5px; scroll-snap-align:center; font-size:9px; line-height:1.1 }
+  .app-shell > aside nav button::after { inset-inline:18px }
+  .app-shell > aside nav svg { display:block; width:19px; height:19px }
+  .app-shell > main { height:auto; padding:18px 12px 42px; overflow:visible }
+  .app-shell > main > header { gap:12px }
+  .app-shell > main > header h1 { font-size:22px }
+  .page-intro, .hero-panel { margin-top:20px; padding:20px }
+  .page-intro h2 { font-size:clamp(24px,7vw,31px) }
+  .live-monitor-grid, .grid-two, .monitor-layout, .subject-layout, .export-layout { grid-template-columns:minmax(0,1fr) }
+  .live-side { position:static }
+  .data-table, .table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch }
+}
+@media (max-width:520px) {
+  .panel, .app-shell > main aside.panel { padding:16px; border-radius:12px }
+  .live-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px }
+  .live-metrics .metric { padding:13px }
+  .live-metrics .metric strong { font-size:19px }
+  .measurement-tabs { overflow-x:auto; scrollbar-width:none }
+  .measurement-tabs button { flex:0 0 auto; white-space:nowrap }
+  .monitor-session-bar select, .measurement-controls select, .measurement-controls button,
+  .result-controls select, .result-controls button { width:100% }
+  .chart-canvas { height:245px }
+  .specs div { align-items:flex-start; flex-wrap:wrap }
+  .specs dd { max-width:100%; text-align:right }
+}
+@media (max-width:380px) {
+  .live-metrics, .metrics { grid-template-columns:1fr }
+  .status { max-width:150px; line-height:1.25 }
+}
+@media (prefers-reduced-motion:reduce) {
+  *, *::before, *::after { animation:none!important }
+}
