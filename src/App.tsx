@@ -6,7 +6,8 @@ type User = { id: string; email: string; full_name: string; role: Role; is_activ
 type RegistrationRequest = { id: string; email: string; full_name: string; institution: string; status: string; created_at: string };
 type Subject = { id: string; subject_code: string; initials: string; research_group: string; year_of_birth: number | null; consent_status: "pending" | "granted" | "withdrawn"; notes: string; is_active: boolean; created_at: string };
 type ExaminationSession = { id: string; session_code: string; subject_code: string; modules: string[]; protocol_stages: string[]; electrode_site: string | null; status: string; created_at: string };
-type SessionResults = { session: ExaminationSession; channels: string[]; selected_channel: string | null; sample_count: number; batch_count: number; downsample_stride: number; summary: { minimum: number | null; maximum: number | null; average: number | null; quality: Record<string, number> }; points: { timestamp: string; protocol_stage: string; sensor_channel: string; value: number; unit: string; quality: string }[]; markers: { id: string; protocol_stage: string; label: string; occurred_at: string }[]; notes: { id: string; note: string; created_at: string }[] };
+type SessionControl = { id: string; measurement: "emg" | "tongue_pressure" | "lip_force"; phase: "baseline" | "recording" | "paused" | "completed"; protocol_stage: string; fsr_point: string | null; created_at: string };
+type SessionResults = { session: ExaminationSession; control: SessionControl | null; channels: string[]; selected_channel: string | null; sample_count: number; batch_count: number; downsample_stride: number; summary: { minimum: number | null; maximum: number | null; average: number | null; quality: Record<string, number> }; points: { timestamp: string; protocol_stage: string; sensor_channel: string; value: number; unit: string; quality: string }[]; markers: { id: string; protocol_stage: string; label: string; occurred_at: string }[]; notes: { id: string; note: string; created_at: string }[] };
 type ExportJob = { id: string; session_ids: string[]; data_mode: string; include_metadata: boolean; include_markers: boolean; status: string; row_count: number; checksum: string; filename: string; created_at: string };
 type AuthSession = { access_token: string; refresh_token: string; expires_in: number; user: User };
 type Device = {
@@ -481,43 +482,49 @@ function Results({ accessToken, role, initialSessionId, onUnauthorized }: { acce
 }
 
 function Monitoring({ device, accessToken, role, onUnauthorized }: { device: Device; accessToken: string; role: Role; onUnauthorized: () => void }) {
-  const points = [20,24,22,31,35,28,42,46,39,51,56,48,63,58,68,62,72,66,75,70];
   const [sessions, setSessions] = useState<ExaminationSession[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [tab, setTab] = useState<"emg" | "tongue_pressure" | "lip_force">("tongue_pressure");
+  const [fsrPoint, setFsrPoint] = useState("median_anterior");
+  const [results, setResults] = useState<SessionResults | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const load = () => fetch(`${API}/sessions`, { headers: { Authorization: `Bearer ${accessToken}` } }).then((response) => {
-    if (response.status === 401) { onUnauthorized(); throw new Error("Sesi login berakhir."); }
-    if (!response.ok) throw new Error("Daftar sesi tidak dapat dimuat."); return response.json() as Promise<ExaminationSession[]>;
-  }).then((items) => { setSessions(items); if (!selectedId && items.length) setSelectedId(items[0].id); setError(""); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."));
-  useEffect(() => { load(); const timer = window.setInterval(load, 4000); return () => window.clearInterval(timer); }, [accessToken, selectedId]);
+  const headers = { Authorization: `Bearer ${accessToken}` };
   const selected = sessions.find((session) => session.id === selectedId);
-  const transition = async (action: "start" | "finalize") => {
-    if (!selected) return; setSaving(true); setError("");
-    try { const response = await fetch(`${API}/sessions/${selected.id}/${action}`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Status sesi tidak dapat diubah."); } await load(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); }
+  const channel = tab === "emg" ? "emg_1" : tab === "tongue_pressure" ? "fsr_1" : "lip_force_1";
+  const load = async () => {
+    try {
+      const sessionResponse = await fetch(`${API}/sessions`, { headers });
+      if (sessionResponse.status === 401) { onUnauthorized(); throw new Error("Sesi login berakhir."); }
+      if (!sessionResponse.ok) throw new Error("Daftar sesi tidak dapat dimuat.");
+      const items = await sessionResponse.json() as ExaminationSession[]; setSessions(items);
+      const id = selectedId || items[0]?.id || ""; if (!selectedId && id) setSelectedId(id);
+      if (id) { const resultResponse = await fetch(`${API}/sessions/${id}/results?sensor_channel=${channel}&max_points=400`, { headers }); if (resultResponse.ok) setResults(await resultResponse.json() as SessionResults); }
+      setError("");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); }
   };
+  useEffect(() => { load(); const timer = window.setInterval(load, 1500); return () => window.clearInterval(timer); }, [accessToken, selectedId, tab]);
+  useEffect(() => { if (selected && !selected.modules.includes(tab)) { const first = selected.modules.find((item) => ["emg", "tongue_pressure", "lip_force"].includes(item)); if (first) setTab(first as typeof tab); } }, [selectedId, sessions]);
+  const transition = async (action: "start" | "finalize") => { if (!selected) return; setSaving(true); try { const response = await fetch(`${API}/sessions/${selected.id}/${action}`, { method: "POST", headers }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Status sesi tidak dapat diubah."); } await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); } };
+  const control = async (phase: SessionControl["phase"]) => { if (!selected) return; setSaving(true); setError(""); try { const stage = tab === "tongue_pressure" ? `tongue_press_${fsrPoint}` : tab === "emg" ? `emg_${selected.electrode_site ?? "unspecified"}` : "lip_force_pull"; const response = await fetch(`${API}/sessions/${selected.id}/control`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ measurement: tab, phase, protocol_stage: stage, fsr_point: tab === "tongue_pressure" ? fsrPoint : null }) }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Kontrol tahap gagal."); } await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); } };
+  const values = results?.points.map((point) => point.value) ?? []; const minValue = values.length ? Math.min(...values) : 0; const maxValue = values.length ? Math.max(...values) : 1; const polyline = values.map((value, index) => `${values.length <= 1 ? 0 : index * 800 / (values.length - 1)},${220 - ((value - minValue) / Math.max(1, maxValue - minValue)) * 175}`).join(" ");
+  const current = values.at(-1); const average = results?.summary.average; const peak = results?.summary.maximum; const controlState = results?.control;
+  const tabLabel = tab === "emg" ? "Sinyal sEMG" : tab === "tongue_pressure" ? "Tekanan Lidah" : "Gaya Bibir";
   return <>
-    <section className="page-intro"><div><p className="eyebrow">LIVE MONITORING</p><h2>{selected ? selected.session_code : "Menunggu sesi dari perangkat"}</h2><p>{selected ? `${selected.subject_code} · ${selected.modules.join(" + ")}` : "Siapkan pemeriksaan baru untuk memulai."}</p></div><span className={`session-state ${selected?.status ?? "none"}`}>{selected?.status ?? "Tidak ada sesi"}</span></section>
-    <section className="monitor-session-bar"><label htmlFor="monitor-session">Sesi</label><select id="monitor-session" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}><option value="">Pilih sesi…</option>{sessions.map((session) => <option key={session.id} value={session.id}>{session.session_code} · {session.subject_code} · {session.status}</option>)}</select>{role !== "researcher" && selected?.status === "prepared" && <button className="primary" disabled={saving} onClick={() => transition("start")}>Tandai mulai</button>}{role !== "researcher" && selected?.status === "active" && <button className="danger-button" disabled={saving} onClick={() => transition("finalize")}>Selesaikan sesi</button>}</section>
+    <section className="page-intro"><div><p className="eyebrow">LIVE MONITORING</p><h2>{selected?.session_code ?? "Menunggu sesi"}</h2><p>{selected ? `${selected.subject_code} · kontrol tahap oleh ${role}` : "Siapkan pemeriksaan baru untuk memulai."}</p></div><span className={`session-state ${selected?.status ?? "none"}`}>{selected?.status ?? "Tidak ada sesi"}</span></section>
+    <section className="monitor-session-bar"><label htmlFor="monitor-session">Sesi</label><select id="monitor-session" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}><option value="">Pilih sesi…</option>{sessions.map((session) => <option key={session.id} value={session.id}>{session.session_code} · {session.subject_code} · {session.status}</option>)}</select>{selected?.status === "prepared" && role !== "researcher" && <button className="primary" disabled={saving} onClick={() => transition("start")}>Aktifkan sesi</button>}{selected?.status === "active" && role !== "researcher" && <button className="danger-button" disabled={saving} onClick={() => transition("finalize")}>Hentikan & simpan</button>}</section>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <section className="monitor-layout">
-      <article className="panel chart-panel">
-        <div className="panel-title"><div><p className="eyebrow">TEKANAN LIDAH</p><h3>FSR channel 1</h3></div><span className="unit">kPa · 100 Hz</span></div>
-        <div className="chart-empty" role="img" aria-label="Pratinjau grafik tekanan lidah. Belum ada sesi aktif.">
-          <svg viewBox="0 0 800 250" preserveAspectRatio="none" aria-hidden="true"><path className="grid" d="M0 50H800M0 100H800M0 150H800M0 200H800"/><polyline points={points.map((y, i) => `${i * 42},${230-y*2.4}`).join(" ")} /></svg>
-          <div><strong>{selected?.status === "active" ? "Sesi aktif — menunggu batch HTTPS" : "Belum ada data langsung"}</strong><span>{selected?.status === "active" ? "Data akan muncul setelah firmware mengirim batch pertama." : "Mulai pemeriksaan dari LCD perangkat."}</span></div>
-        </div>
-        <p className="chart-summary">Ringkasan aksesibel: {selected ? `sesi ${selected.session_code} berstatus ${selected.status}` : "tidak ada sesi dipilih"}. Belum ada sampel untuk ditampilkan.</p>
-      </article>
-      <aside className="panel side-panel">
-        <p className="eyebrow">KANAL FIRMWARE</p><h3>Yang dapat dimonitor</h3>
-        <Capability name="EMG" meta={`${device.emg_channels} kanal`} enabled={device.emg_channels > 0} />
-        <Capability name="Tekanan" meta={`${device.tongue_pressure_channels} kanal`} enabled={device.tongue_pressure_channels > 0} />
-        <Capability name="Gaya bibir" meta="Load cell" enabled={device.lip_force} />
-      </aside>
-    </section>
+    {selected && <><div className="measurement-tabs" role="tablist" aria-label="Jenis pengukuran">{selected.modules.map((module) => <button key={module} role="tab" aria-selected={tab === module} onClick={() => setTab(module as typeof tab)}>{module === "emg" ? "sEMG" : module === "tongue_pressure" ? "Tekanan Lidah" : "Gaya Bibir"}</button>)}</div>
+    <section className="live-metrics"><Metric label="Nilai saat ini" value={current?.toFixed(1) ?? "—"} detail={results?.points[0]?.unit ?? "Menunggu data"} /><Metric label="Nilai puncak" value={peak?.toFixed(1) ?? "—"} detail={channel} /><Metric label="Rata-rata" value={average?.toFixed(1) ?? "—"} detail={`${results?.sample_count ?? 0} sampel`} /><Metric label="Tahap aktif" value={controlState?.phase ?? "idle"} detail={controlState?.protocol_stage ?? "Belum dimulai"} /></section>
+    <section className="live-monitor-grid"><article className="panel live-chart-panel"><div className="panel-title"><div><p className="eyebrow">{tabLabel}</p><h3>{tab === "emg" ? `Elektroda ${selected.electrode_site?.replaceAll("_", " ") ?? "belum ditentukan"}` : tab === "tongue_pressure" ? `Titik ${fsrPoint.replaceAll("_", " ")}` : "Load cell traksi"}</h3></div><span className="unit">{results?.points[0]?.unit ?? (tab === "emg" ? "uV" : tab === "tongue_pressure" ? "kPa" : "N")}</span></div><div className={`live-chart ${tab}`} role="img" aria-label={`Grafik langsung ${tabLabel}, ${values.length} titik`}><svg viewBox="0 0 800 240" preserveAspectRatio="none"><path className="grid" d="M0 40H800M0 100H800M0 160H800M0 220H800"/><polyline points={polyline}/></svg>{values.length === 0 && <div><strong>Menunggu data {tabLabel}</strong><span>Pilih tahap lalu tekan mulai pengukuran. Simulator/device akan mengikuti kontrol ini.</span></div>}</div><div className="measurement-controls">{tab === "tongue_pressure" && <select aria-label="Titik ukur FSR" value={fsrPoint} onChange={(event) => setFsrPoint(event.target.value)}><option value="median_anterior">Median anterior</option><option value="median_middle">Median tengah</option><option value="median_posterior">Median posterior</option><option value="lateral_left">Lateral kiri</option><option value="lateral_right">Lateral kanan</option></select>}{tab === "tongue_pressure" && <button className="secondary" disabled={selected.status !== "active" || saving} onClick={() => control("baseline")}>Mulai baseline</button>}<button className="primary" disabled={selected.status !== "active" || saving} onClick={() => control("recording")}>Mulai ukur {tab === "emg" ? "EMG" : tab === "tongue_pressure" ? "titik ini" : "gaya bibir"}</button><button className="secondary" disabled={selected.status !== "active" || saving || !controlState} onClick={() => control("paused")}>Jeda</button><button className="secondary" disabled={selected.status !== "active" || saving || !controlState} onClick={() => control("completed")}>Selesai tahap</button></div><p className="chart-summary">Polling 1,5 detik · {results?.batch_count ?? 0} batch · kualitas baik {results?.summary.quality.good ?? 0}</p></article>
+    <aside className="panel live-side"><p className="eyebrow">STATUS PENGUKURAN</p><h3>{controlState ? `${controlState.measurement} · ${controlState.phase}` : "Belum ada tahap aktif"}</h3>{tab === "tongue_pressure" && <TonguePointMap active={fsrPoint} values={results?.points.map((point) => point.value) ?? []} />}<div className="quality-list"><p><span>Koneksi device</span><strong>{device.connection}</strong></p><p><span>Kualitas baik</span><strong>{results?.summary.quality.good ?? 0}</strong></p><p><span>Paket tersimpan</span><strong>{results?.batch_count ?? 0}</strong></p><p><span>Downsample</span><strong>{results?.downsample_stride ?? 1}×</strong></p></div></aside></section></>}
   </>;
+}
+
+function TonguePointMap({ active, values }: { active: string; values: number[] }) {
+  const peak = values.length ? Math.max(...values) : 0;
+  const points = [["median_anterior", "MA"], ["median_middle", "MM"], ["median_posterior", "MP"], ["lateral_left", "LK"], ["lateral_right", "LN"]];
+  return <div className="tongue-map" aria-label={`Peta titik tekanan. Titik aktif ${active}`}><div className="palate-shape">{points.map(([id, label]) => <span key={id} className={`${id} ${active === id ? "active" : ""}`} title={id}>{label}<i>{active === id && peak ? peak.toFixed(1) : ""}</i></span>)}</div><small>Simulasi satu kanal FSR diukur bergiliran</small></div>;
 }
 
 function Devices({ device, apiOnline }: { device: Device; apiOnline: boolean }) {

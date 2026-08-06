@@ -157,6 +157,34 @@
 .export-list strong, .export-list span, .export-list code { display: block; }
 .export-list span { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .export-list code { margin-top: 6px; color: #587086; font-size: 10px; }
+.measurement-tabs { display: flex; gap: 4px; width: fit-content; margin-top: 18px; padding: 4px; border-radius: 10px; background: #e7edf4; }
+.measurement-tabs button { min-height: 42px; padding: 0 18px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-weight: 800; }
+.measurement-tabs button[aria-selected="true"] { background: var(--primary); color: #fff; box-shadow: 0 2px 5px rgba(11,36,64,.18); }
+.live-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+.live-monitor-grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 16px; margin-top: 16px; align-items: start; }
+.live-chart { position: relative; height: 310px; margin-top: 18px; border-radius: 10px; background: #f8fafc; overflow: hidden; }
+.live-chart svg { width: 100%; height: 100%; }
+.live-chart .grid { fill: none; stroke: #dfe7ef; stroke-width: 1; }
+.live-chart polyline { fill: none; stroke: var(--teal); stroke-width: 3; vector-effect: non-scaling-stroke; }
+.live-chart.emg polyline { stroke: #174978; stroke-width: 2; }
+.live-chart.lip_force polyline { stroke: #4b75bd; }
+.live-chart > div { position: absolute; inset: 0; display: grid; place-content: center; padding: 20px; text-align: center; background: rgba(248,250,252,.76); }
+.live-chart > div strong, .live-chart > div span { display: block; }
+.live-chart > div span { max-width: 480px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.measurement-controls { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
+.measurement-controls select { min-height: 44px; padding: 8px 11px; border: 1px solid #ccd8e3; border-radius: 8px; background: #fff; font: inherit; }
+.measurement-controls button { min-height: 44px; }
+.live-side h3 { line-height: 1.4; text-transform: capitalize; }
+.quality-list { display: grid; margin-top: 18px; }
+.quality-list p { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 11px 0; border-top: 1px solid var(--line); font-size: 11px; }
+.quality-list span { color: var(--muted); }
+.tongue-map { margin-top: 18px; text-align: center; }
+.palate-shape { position: relative; width: 180px; height: 230px; margin: auto; border: 2px solid #dae6ef; border-radius: 48% 48% 44% 44% / 34% 34% 65% 65%; background: linear-gradient(#f5fafc,#edf5f8); }
+.palate-shape > span { position: absolute; display: grid; place-items: center; width: 43px; height: 43px; border: 5px solid #d3ebea; border-radius: 50%; background: #73c7c5; color: #064e55; font-size: 9px; font-weight: 900; transform: translate(-50%,-50%); }
+.palate-shape > span.active { border-color: #f4ad3e; background: #119d9d; color: #fff; box-shadow: 0 0 0 5px rgba(15,155,155,.12); }
+.palate-shape span i { position: absolute; top: 45px; color: var(--primary); font-size: 9px; font-style: normal; }
+.palate-shape .median_anterior { left: 50%; top: 22%; }.palate-shape .median_middle { left: 50%; top: 48%; }.palate-shape .median_posterior { left: 50%; top: 74%; }.palate-shape .lateral_left { left: 20%; top: 63%; }.palate-shape .lateral_right { left: 80%; top: 63%; }
+.tongue-map > small { display: block; margin-top: 12px; color: var(--muted); line-height: 1.5; }
 
 @media (max-width: 860px) {
   .auth-layout { grid-template-columns: 1fr; }
@@ -189,6 +217,11 @@
   .result-controls { flex-direction: column; }
   .export-layout { grid-template-columns: 1fr; }
   .export-list > div { align-items: flex-start; flex-direction: column; }
+  .live-metrics { grid-template-columns: 1fr 1fr; }
+  .live-monitor-grid { grid-template-columns: 1fr; }
+  .measurement-tabs { width: 100%; }
+  .measurement-tabs button { flex: 1; padding: 0 8px; }
+  .measurement-controls { align-items: stretch; flex-direction: column; }
   .user-list > div { grid-template-columns: 42px minmax(0, 1fr); }
   .role-badge { grid-column: 2; justify-self: start; }
 }
