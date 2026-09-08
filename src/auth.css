@@ -199,6 +199,10 @@ body { background: #f1f5f9; }
 .primary:active, .secondary:active, .danger-button:active, .measurement-tabs button:active { transform: translateY(1px); }
 .primary:disabled, .secondary:disabled, .danger-button:disabled { cursor: not-allowed; opacity: .48; }
 .medical-chart { margin-top: 16px; color: #119a9a; }
+.live-unit { display: inline-flex; align-items: center; gap: 7px; }
+.live-unit i { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 4px rgba(22,163,74,.12); animation: live-pulse 1.4s ease-out infinite; }
+@keyframes live-pulse { 50% { box-shadow: 0 0 0 7px rgba(22,163,74,0); } }
+@media (prefers-reduced-motion: reduce) { .live-unit i { animation: none; } }
 .medical-chart.tone-navy { color: #174978; }
 .medical-chart.tone-blue { color: #4279bd; }
 .chart-legend { display: flex; align-items: center; gap: 18px; min-height: 36px; padding: 0 2px; color: #40566c; font-size: 10px; }
