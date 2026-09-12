@@ -12,7 +12,7 @@
 .sensor-tags span { padding: 7px 12px; border-radius: 999px; background: rgba(10, 160, 169, .18); color: #61dbe0; font-size: 11px; font-weight: 700; }
 .auth-story footer { color: #6092ba; font-size: 11px; line-height: 1.7; }
 .auth-form-side { display: grid; place-items: center; padding: 48px clamp(32px, 7vw, 90px); }
-.auth-form-wrap { width: min(100%, 440px); }
+.auth-form-wrap { width: 100%; max-width: 440px; min-width: 0; }
 .prototype-pill { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px; padding: 6px 11px; border-radius: 999px; background: #f4ead7; color: #9a6200; font-size: 10px; font-weight: 700; }
 .prototype-pill i { width: 6px; height: 6px; border-radius: 50%; background: #c98b21; }
 .auth-tabs { display: flex; gap: 4px; width: fit-content; margin-bottom: 18px; padding: 4px; border-radius: 9px; background: #e8eef4; }
@@ -387,4 +387,80 @@ body { background: #f1f5f9; }
   .device-card-head .status { grid-column:2; justify-self:start }
   .device-card dl, .wifi-guide .steps { grid-template-columns:1fr }
   .device-card dl div { align-items:flex-start }
+}
+
+/* 2026 brand refresh — palette supplied in /assets. */
+:root {
+  --navy: #033075;
+  --primary: #033075;
+  --brand-blue: #033a9c;
+  --teal: #02999c;
+  --teal-soft: #e5f5f5;
+  --text: #10233f;
+  --muted: #5d718a;
+  --line: #d7e3ed;
+  --surface: #fff;
+  --focus: #02999c;
+}
+
+body { background: #f3f7fa; }
+.app-shell > main { background: radial-gradient(circle at 92% 0, rgba(2,153,156,.08), transparent 30%), #f3f7fa; }
+.app-shell > aside { background: #033075; border-right: 1px solid rgba(255,255,255,.12); box-shadow: 12px 0 36px rgba(3,48,117,.1); }
+.brand-mark { min-height: 48px; color: #fff; }
+.brand-mark > img { width: 46px; height: 46px; object-fit: contain; filter: drop-shadow(0 5px 10px rgba(0,0,0,.2)); }
+.brand-mark small { color: rgba(255,255,255,.72); }
+.app-shell > aside nav button { color: #fff; border: 1px solid transparent; }
+.app-shell > aside nav button:hover { background: #02999c; color: #fff; }
+.app-shell > aside nav button.active { background: #02999c; color: #fff; box-shadow: 0 7px 18px rgba(0,20,65,.2); }
+.app-shell > aside nav button::after { background: #fff; }
+.app-shell > aside nav button:hover svg,
+.app-shell > aside nav button.active svg { filter: none; }
+.scope-note { border-color: rgba(255,255,255,.2); background: rgba(255,255,255,.08); }
+.scope-note strong, .scope-note span, .text-button { color: #fff; }
+
+.auth-story { background: #033075; }
+.auth-logo { width: 48px; height: 48px; padding: 2px; border-radius: 0; background: transparent; object-fit: contain; filter: drop-shadow(0 6px 12px rgba(0,0,0,.2)); }
+.auth-brand small { color: rgba(255,255,255,.72); }
+.sensor-tags span { background: rgba(2,153,156,.28); color: #fff; }
+
+.panel, .metric, .hero-panel, .page-intro, .monitor-session-bar {
+  border-color: var(--line);
+  box-shadow: 0 1px 2px rgba(16,35,63,.04), 0 10px 30px rgba(16,35,63,.045);
+}
+.panel:hover { border-color: #bcd5df; box-shadow: 0 2px 4px rgba(16,35,63,.04), 0 14px 34px rgba(16,35,63,.06); }
+.metric::before { background: #02999c; }
+.primary { background: #033075; }
+.primary:hover { background: #02999c; }
+.secondary:hover { border-color: #02999c; color: #027b7e; background: #f0fbfb; }
+.choice-list button.selected, .module-options button.selected { border-color: #02999c; background: rgba(2,153,156,.07); }
+
+.measurement-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  margin-top: 20px;
+  color: var(--text);
+}
+.measurement-label::before { content: ""; width: 4px; height: 30px; border-radius: 999px; background: #02999c; }
+.measurement-label span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.measurement-label strong { font-size: 16px; }
+.measurement-tabs { background: #e9f0f5; }
+.measurement-tabs button[aria-selected="true"] { background: #033075; }
+.medical-chart { color: #02999c; }
+.medical-chart.tone-blue { color: #033a9c; }
+.tone-blue .signal-area { fill: #033a9c; }
+.chart-hover rect { fill: #033075; }
+.palate-shape > span.active { background: #02999c; }
+
+@media (max-width:760px) {
+  .auth-layout, .auth-form-side { min-width: 0; }
+  .prototype-pill { max-width: 100%; white-space: normal; }
+  .app-shell > aside { background: #033075; }
+  .app-shell > aside nav button:hover,
+  .app-shell > aside nav button.active { background: #02999c; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .panel, .metric, .app-shell > aside nav button, .app-shell > aside nav svg { transition: none; }
 }
