@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import brandLogo from "../assets/logo.png";
 
 type Screen = "dashboard" | "subjects" | "examination" | "monitoring" | "results" | "history" | "exports" | "devices" | "users";
@@ -9,7 +9,7 @@ type Subject = { id: string; subject_code: string; initials: string; research_gr
 type ExaminationSession = { id: string; session_code: string; subject_code: string; operator_name?: string | null; modules: string[]; protocol_stages: string[]; electrode_site: string | null; status: string; created_at: string; started_at?: string | null; completed_at?: string | null };
 type SessionControl = { id: string; measurement: "emg" | "tongue_pressure" | "lip_force"; phase: "baseline" | "recording" | "paused" | "completed"; protocol_stage: string; fsr_point: string | null; created_at: string };
 type SessionResults = { session: ExaminationSession; control: SessionControl | null; channels: string[]; selected_channel: string | null; sample_count: number; batch_count: number; downsample_stride: number; summary: { minimum: number | null; maximum: number | null; average: number | null; quality: Record<string, number> }; points: { timestamp: string; protocol_stage: string; sensor_channel: string; value: number; unit: string; quality: string }[]; markers: { id: string; protocol_stage: string; label: string; occurred_at: string }[]; notes: { id: string; note: string; created_at: string }[] };
-type ExportJob = { id: string; session_ids: string[]; data_mode: string; include_metadata: boolean; include_markers: boolean; status: string; row_count: number; checksum: string; filename: string; created_at: string };
+type ExportJob = { id: string; session_ids: string[]; data_mode: string; include_metadata: boolean; include_markers: boolean; status: string; row_count: number; checksum: string; filename: string; file_format: "csv" | "xlsx"; created_at: string };
 type AuthSession = { access_token: string; refresh_token: string; expires_in: number; user: User };
 type Device = {
   id: string;
@@ -94,6 +94,7 @@ export function App() {
   const [summary, setSummary] = useState<Summary>({ device_status: "offline", pending_sync: 0, completed_sessions: 0, subject_count: 0, last_calibration: null });
   const [apiOnline, setApiOnline] = useState(false);
   const [resultSessionId, setResultSessionId] = useState("");
+  const refreshInFlight = useRef<Promise<AuthSession | null> | null>(null);
 
   const saveAuth = (session: AuthSession | null) => {
     setAuth(session);
@@ -109,17 +110,41 @@ export function App() {
     saveAuth(null);
   };
 
+  const renewSession = () => {
+    if (!auth) return Promise.resolve(null);
+    if (refreshInFlight.current) return refreshInFlight.current;
+    refreshInFlight.current = fetch(`${API}/auth/refresh`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: auth.refresh_token }),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("refresh failed");
+      const session = await response.json() as AuthSession;
+      saveAuth(session);
+      return session;
+    }).catch(() => {
+      saveAuth(null);
+      return null;
+    }).finally(() => { refreshInFlight.current = null; });
+    return refreshInFlight.current;
+  };
+
+  useEffect(() => {
+    if (!auth) return;
+    const timer = window.setTimeout(() => { void renewSession(); }, Math.max(30, auth.expires_in - 60) * 1000);
+    return () => window.clearTimeout(timer);
+  }, [auth]);
+
   useEffect(() => {
     if (!auth) return;
     let active = true;
     const refresh = () => Promise.all([
       fetch(`${API}/devices`, { headers: { Authorization: `Bearer ${auth.access_token}` } }).then((r) => {
-        if (r.status === 401) { saveAuth(null); throw new Error("session expired"); }
+        if (r.status === 401) { void renewSession(); throw new Error("session expired"); }
         if (!r.ok) throw new Error("device request failed");
         return r.json() as Promise<Device[]>;
       }),
       fetch(`${API}/dashboard/summary`, { headers: { Authorization: `Bearer ${auth.access_token}` } }).then((r) => {
-        if (r.status === 401) { saveAuth(null); throw new Error("session expired"); }
+        if (r.status === 401) { void renewSession(); throw new Error("session expired"); }
         if (!r.ok) throw new Error("summary request failed");
         return r.json() as Promise<Summary>;
       }),
@@ -173,14 +198,14 @@ export function App() {
         </header>
 
         {screen === "dashboard" && <Dashboard device={device} summary={summary} apiOnline={apiOnline} onOpenDevice={() => setScreen("devices")} />}
-        {screen === "subjects" && <Subjects accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
-        {screen === "examination" && auth.user.role !== "researcher" && <ExaminationWizard accessToken={auth.access_token} devices={devices} onUnauthorized={() => saveAuth(null)} onPrepared={() => setScreen("monitoring")} />}
-        {screen === "monitoring" && <Monitoring device={device} accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => saveAuth(null)} />}
-        {screen === "results" && <Results accessToken={auth.access_token} initialSessionId={resultSessionId} onUnauthorized={() => saveAuth(null)} />}
-        {screen === "history" && <History accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} onView={(id) => { setResultSessionId(id); setScreen("results"); }} />}
-        {screen === "exports" && <Exports accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} onView={(id) => { setResultSessionId(id); setScreen("results"); }} />}
-        {screen === "devices" && <Devices devices={devices} accessToken={auth.access_token} role={auth.user.role} apiOnline={apiOnline} onUnauthorized={() => saveAuth(null)} onChanged={() => setDeviceRefreshKey((value) => value + 1)} />}
-        {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} onUnauthorized={() => saveAuth(null)} />}
+        {screen === "subjects" && <Subjects accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => { void renewSession(); }} />}
+        {screen === "examination" && auth.user.role !== "researcher" && <ExaminationWizard accessToken={auth.access_token} devices={devices} onUnauthorized={() => { void renewSession(); }} onPrepared={() => setScreen("monitoring")} />}
+        {screen === "monitoring" && <Monitoring device={device} accessToken={auth.access_token} role={auth.user.role} onUnauthorized={() => { void renewSession(); }} />}
+        {screen === "results" && <Results accessToken={auth.access_token} initialSessionId={resultSessionId} onUnauthorized={() => { void renewSession(); }} />}
+        {screen === "history" && <History accessToken={auth.access_token} onUnauthorized={() => { void renewSession(); }} onView={(id) => { setResultSessionId(id); setScreen("results"); }} />}
+        {screen === "exports" && <Exports accessToken={auth.access_token} onUnauthorized={() => { void renewSession(); }} onView={(id) => { setResultSessionId(id); setScreen("results"); }} />}
+        {screen === "devices" && <Devices devices={devices} accessToken={auth.access_token} role={auth.user.role} apiOnline={apiOnline} onUnauthorized={() => { void renewSession(); }} onChanged={() => setDeviceRefreshKey((value) => value + 1)} />}
+        {screen === "users" && auth.user.role === "admin" && <Users accessToken={auth.access_token} onUnauthorized={() => { void renewSession(); }} />}
       </main>
     </div>
   );
@@ -303,8 +328,10 @@ function Subjects({ accessToken, role, onUnauthorized }: { accessToken: string; 
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+  const [deleting, setDeleting] = useState<Subject | null>(null);
   const [form, setForm] = useState({ subject_code: "", initials: "", research_group: "", year_of_birth: "", consent_status: "pending" as Subject["consent_status"], notes: "" });
-  const clearForm = () => { setEditingId(""); setForm({ subject_code: "", initials: "", research_group: "", year_of_birth: "", consent_status: "pending", notes: "" }); };
+  const clearForm = () => { setEditingId(""); setFormOpen(false); setForm({ subject_code: "", initials: "", research_group: "", year_of_birth: "", consent_status: "pending", notes: "" }); };
 
   const loadSubjects = async () => {
     try {
@@ -329,31 +356,31 @@ function Subjects({ accessToken, role, onUnauthorized }: { accessToken: string; 
     finally { setSaving(false); }
   };
 
-  const edit = (subject: Subject) => { setEditingId(subject.id); setForm({ subject_code: subject.subject_code, initials: subject.initials, research_group: subject.research_group, year_of_birth: subject.year_of_birth?.toString() ?? "", consent_status: subject.consent_status, notes: subject.notes }); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const openCreate = () => { clearForm(); setFormOpen(true); };
+  const edit = (subject: Subject) => { setEditingId(subject.id); setFormOpen(true); setForm({ subject_code: subject.subject_code, initials: subject.initials, research_group: subject.research_group, year_of_birth: subject.year_of_birth?.toString() ?? "", consent_status: subject.consent_status, notes: subject.notes }); };
   const remove = async (subject: Subject) => {
-    if (!window.confirm(`Hapus subjek ${subject.subject_code}? Tindakan ini hanya berhasil jika subjek belum memiliki sesi.`)) return;
+    setSaving(true); setError("");
     const response = await fetch(`${API}/subjects/${subject.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!response.ok) { const body = await response.json() as { detail?: string }; setError(body.detail ?? "Subjek tidak dapat dihapus."); return; }
+    if (!response.ok) { const body = await response.json() as { detail?: string }; setError(body.detail ?? "Subjek tidak dapat dihapus."); setDeleting(null); setSaving(false); return; }
     if (editingId === subject.id) clearForm();
-    await loadSubjects();
+    setDeleting(null); await loadSubjects(); setSaving(false);
   };
 
   const canEdit = role !== "researcher";
   return <>
-    <section className="page-intro"><div><p className="eyebrow">RESEARCH SUBJECTS</p><h2>Subjek penelitian terkode</h2><p>Gunakan kode riset. Jangan masukkan nama lengkap atau identitas langsung pasien.</p></div><span className="subject-total">{subjects.length} subjek</span></section>
+    <section className="page-intro"><div><p className="eyebrow">RESEARCH SUBJECTS</p><h2>Subjek penelitian terkode</h2><p>Gunakan kode riset. Jangan masukkan nama lengkap atau identitas langsung pasien.</p></div><div className="intro-actions"><span className="subject-total">{subjects.length} subjek</span>{canEdit && <button className="primary" onClick={openCreate}>Tambah subjek</button>}</div></section>
     <section className="subject-toolbar" aria-label="Filter subjek"><input aria-label="Cari subjek" placeholder="Cari kode, inisial, atau kelompok…" value={search} onChange={(event) => setSearch(event.target.value)} /><select aria-label="Filter consent" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="">Semua status consent</option><option value="pending">Menunggu</option><option value="granted">Disetujui</option><option value="withdrawn">Ditarik</option></select></section>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <section className={`subject-layout ${canEdit ? "" : "read-only"}`}>
-      {canEdit && <article className="panel"><p className="eyebrow">{editingId ? "EDIT SUBJEK" : "SUBJEK BARU"}</p><h3>{editingId ? `Perbarui ${form.subject_code}` : "Daftarkan subjek"}</h3><form className="stack-form" onSubmit={submit}>
-        <label htmlFor="subject-code">Kode subjek</label><input id="subject-code" required disabled={Boolean(editingId)} placeholder="TS-2026-001" value={form.subject_code} onChange={(event) => setForm({ ...form, subject_code: event.target.value })} />
+    <article className="panel subject-directory"><div className="directory-heading"><div><p className="eyebrow">DIRECTORY</p><h3>Daftar subjek</h3></div><small>Pilih Edit data untuk membuka formulir subjek.</small></div><div className="subject-list">{subjects.map((subject) => <div key={subject.id}><div className="subject-code"><strong>{subject.subject_code}</strong><span>{subject.initials} · {subject.research_group}</span></div><span className="subject-year"><small>Tahun lahir</small>{subject.year_of_birth ?? "Tidak dicatat"}</span><span className={`consent ${subject.consent_status}`}>{subject.consent_status === "granted" ? "Disetujui" : subject.consent_status === "withdrawn" ? "Ditarik" : "Menunggu"}</span>{canEdit && <div className="row-actions"><button className="secondary compact" onClick={() => edit(subject)}>Edit data</button><button className="danger-button compact" onClick={() => setDeleting(subject)}>Hapus</button></div>}</div>)}</div>{subjects.length === 0 && !error && <p className="empty-state">Belum ada subjek yang sesuai filter.</p>}</article>
+    {formOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) clearForm(); }}><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="subject-form-title"><div className="modal-heading"><div><p className="eyebrow">{editingId ? "EDIT SUBJEK" : "SUBJEK BARU"}</p><h3 id="subject-form-title">{editingId ? `Perbarui ${form.subject_code}` : "Daftarkan subjek"}</h3></div><button type="button" className="modal-close" aria-label="Tutup formulir" onClick={clearForm}>×</button></div><form className="stack-form" onSubmit={submit}>
+        <label htmlFor="subject-code">Kode subjek</label><input id="subject-code" autoFocus required disabled={Boolean(editingId)} placeholder="TS-2026-001" value={form.subject_code} onChange={(event) => setForm({ ...form, subject_code: event.target.value })} />
         <div className="form-row"><div><label htmlFor="initials">Inisial</label><input id="initials" required maxLength={12} placeholder="AN" value={form.initials} onChange={(event) => setForm({ ...form, initials: event.target.value })} /></div><div><label htmlFor="birth-year">Tahun lahir</label><input id="birth-year" type="number" min="1900" max={new Date().getFullYear()} placeholder="2015" value={form.year_of_birth} onChange={(event) => setForm({ ...form, year_of_birth: event.target.value })} /></div></div>
         <label htmlFor="research-group">Kelompok penelitian</label><input id="research-group" required placeholder="Kelompok kontrol" value={form.research_group} onChange={(event) => setForm({ ...form, research_group: event.target.value })} />
         <label htmlFor="consent-status">Status consent</label><select id="consent-status" value={form.consent_status} onChange={(event) => setForm({ ...form, consent_status: event.target.value as Subject["consent_status"] })}><option value="pending">Menunggu persetujuan</option><option value="granted">Telah disetujui</option><option value="withdrawn">Ditarik</option></select>
         <label htmlFor="subject-notes">Catatan non-identitas</label><textarea id="subject-notes" rows={3} maxLength={2000} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
-        <div className="form-actions">{editingId && <button type="button" className="secondary" onClick={clearForm}>Batal</button>}<button className="primary" disabled={saving}>{saving ? "Menyimpan…" : editingId ? "Simpan perubahan" : "Simpan subjek"}</button></div>
-      </form></article>}
-      <article className="panel subject-directory"><p className="eyebrow">DIRECTORY</p><h3>Daftar subjek</h3><div className="subject-list">{subjects.map((subject) => <div key={subject.id}><div className="subject-code"><strong>{subject.subject_code}</strong><span>{subject.initials} · {subject.research_group}</span></div><span>{subject.year_of_birth ?? "Tahun tidak dicatat"}</span><span className={`consent ${subject.consent_status}`}>{subject.consent_status === "granted" ? "Disetujui" : subject.consent_status === "withdrawn" ? "Ditarik" : "Menunggu"}</span>{canEdit && <div className="row-actions"><button className="secondary compact" onClick={() => edit(subject)}>Edit</button><button className="danger-button compact" onClick={() => remove(subject)}>Hapus</button></div>}</div>)}</div>{subjects.length === 0 && !error && <p className="empty-state">Belum ada subjek yang sesuai filter.</p>}</article>
-    </section>
+        <div className="form-actions"><button type="button" className="secondary" onClick={clearForm}>Batal</button><button className="primary" disabled={saving}>{saving ? "Menyimpan…" : editingId ? "Simpan perubahan" : "Simpan subjek"}</button></div>
+      </form></section></div>}
+    {deleting && <div className="modal-backdrop"><section className="modal-card confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="delete-subject-title"><p className="eyebrow danger-text">KONFIRMASI HAPUS</p><h3 id="delete-subject-title">Hapus subjek {deleting.subject_code}?</h3><p>Subjek hanya dapat dihapus jika belum memiliki sesi pemeriksaan. Data sesi yang sudah ada tidak akan ikut terhapus.</p><div className="form-actions"><button className="secondary" onClick={() => setDeleting(null)}>Batal</button><button className="danger-button" disabled={saving} onClick={() => void remove(deleting)}>{saving ? "Menghapus…" : "Ya, hapus subjek"}</button></div></section></div>}
   </>;
 }
 
@@ -504,6 +531,7 @@ function Exports({ accessToken, onUnauthorized, onView }: { accessToken: string;
   const [jobs, setJobs] = useState<ExportJob[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState("both");
+  const [format, setFormat] = useState<"csv" | "xlsx">("xlsx");
   const [metadata, setMetadata] = useState(true);
   const [markers, setMarkers] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -515,10 +543,10 @@ function Exports({ accessToken, onUnauthorized, onView }: { accessToken: string;
     setSessions(await sessionResponse.json() as ExaminationSession[]); setJobs(await exportResponse.json() as ExportJob[]);
   }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."));
   useEffect(() => { load(); }, [accessToken]);
-  const create = async () => { setSaving(true); setError(""); try { const response = await fetch(`${API}/exports`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ session_ids: selected, data_mode: mode, include_metadata: metadata, include_markers: markers }) }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Ekspor tidak dapat dibuat."); } setSelected([]); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); } };
+  const create = async () => { setSaving(true); setError(""); try { const response = await fetch(`${API}/exports`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ session_ids: selected, data_mode: mode, include_metadata: metadata, include_markers: markers, file_format: format }) }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Ekspor tidak dapat dibuat."); } setSelected([]); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); } };
   const download = async (job: ExportJob) => { const response = await fetch(`${API}/exports/${job.id}/download`, { headers }); if (!response.ok) { setError("Berkas tidak dapat diunduh."); return; } const url = URL.createObjectURL(await response.blob()); const anchor = document.createElement("a"); anchor.href = url; anchor.download = job.filename; anchor.click(); URL.revokeObjectURL(url); };
   const remove = async (job: ExportJob) => { if (!window.confirm(`Hapus arsip ${job.filename}?`)) return; const response = await fetch(`${API}/exports/${job.id}`, { method: "DELETE", headers }); if (!response.ok) { setError("Arsip ekspor tidak dapat dihapus."); return; } await load(); };
-  return <><section className="page-intro"><div><p className="eyebrow">DATA EXPORT</p><h2>Ekspor dataset penelitian</h2><p>CSV mempertahankan data mentah untuk analisis. Laporan visual dengan grafik tersedia dari halaman Hasil.</p></div></section>{error && <p className="form-error" role="alert">{error}</p>}<section className="export-layout"><article className="panel"><p className="eyebrow">KONFIGURASI</p><h3>Pilih data</h3><fieldset className="export-sessions"><legend>Sesi pemeriksaan</legend>{sessions.map((session) => <label key={session.id}><input type="checkbox" checked={selected.includes(session.id)} onChange={() => setSelected(selected.includes(session.id) ? selected.filter((id) => id !== session.id) : [...selected, session.id])} /><span><strong>{session.session_code}</strong><small>{session.subject_code} · {session.status}</small></span><button type="button" className="text-button" onClick={(event) => { event.preventDefault(); onView(session.id); }}>Lihat laporan</button></label>)}{sessions.length === 0 && <p className="empty-state">Belum ada sesi untuk diekspor.</p>}</fieldset><label className="export-field" htmlFor="data-mode">Jenis nilai</label><select id="data-mode" value={mode} onChange={(event) => setMode(event.target.value)}><option value="both">Raw + terkalibrasi</option><option value="raw">Raw saja</option><option value="processed">Terkalibrasi saja</option></select><label className="check-row"><input type="checkbox" checked={metadata} onChange={(event) => setMetadata(event.target.checked)} /> Sertakan metadata sesi</label><label className="check-row"><input type="checkbox" checked={markers} onChange={(event) => setMarkers(event.target.checked)} /> Sertakan event marker</label><button className="primary export-create" disabled={!selected.length || saving} onClick={create}>{saving ? "Membuat CSV…" : "Buat ekspor CSV"}</button></article><article className="panel"><p className="eyebrow">ARSIP EKSPOR</p><h3>Berkas siap diunduh</h3><div className="export-list">{jobs.map((job) => <div key={job.id}><div><strong>{job.filename}</strong><span>{job.row_count} baris · {job.data_mode} · {new Date(job.created_at).toLocaleString("id-ID")}</span><code title={job.checksum}>SHA-256 {job.checksum.slice(0, 16)}…</code></div><div className="row-actions"><button className="secondary compact" onClick={() => download(job)}>Unduh</button><button className="danger-button compact" onClick={() => remove(job)}>Hapus</button></div></div>)}</div>{jobs.length === 0 && <p className="empty-state">Belum ada berkas ekspor.</p>}</article></section></>;
+  return <><section className="page-intro"><div><p className="eyebrow">DATA EXPORT</p><h2>Ekspor hasil penelitian</h2><p>Pilih Excel untuk laporan dengan grafik, atau CSV untuk pengolahan data lanjutan.</p></div></section>{error && <p className="form-error" role="alert">{error}</p>}<section className="export-layout"><article className="panel"><p className="eyebrow">KONFIGURASI</p><h3>Pilih data</h3><fieldset className="export-sessions"><legend>Sesi pemeriksaan</legend>{sessions.map((session) => <label key={session.id}><input type="checkbox" checked={selected.includes(session.id)} onChange={() => setSelected(selected.includes(session.id) ? selected.filter((id) => id !== session.id) : [...selected, session.id])} /><span><strong>{session.session_code}</strong><small>{session.subject_code} · {session.status}</small></span><button type="button" className="text-button" onClick={(event) => { event.preventDefault(); onView(session.id); }}>Lihat laporan</button></label>)}{sessions.length === 0 && <p className="empty-state">Belum ada sesi untuk diekspor.</p>}</fieldset><fieldset className="export-format"><legend>Format berkas</legend><div className="export-format-grid"><label className={format === "xlsx" ? "selected" : ""}><input type="radio" name="export-format" value="xlsx" checked={format === "xlsx"} onChange={() => setFormat("xlsx")} /><strong>Excel laporan (.xlsx)</strong><span>Sheet Sensor Data dan Charts per kanal.</span></label><label className={format === "csv" ? "selected" : ""}><input type="radio" name="export-format" value="csv" checked={format === "csv"} onChange={() => setFormat("csv")} /><strong>CSV dataset (.csv)</strong><span>Format datar untuk analisis statistik.</span></label></div></fieldset><label className="export-field" htmlFor="data-mode">Jenis nilai</label><select id="data-mode" value={mode} onChange={(event) => setMode(event.target.value)}><option value="both">Raw + terkalibrasi</option><option value="raw">Raw saja</option><option value="processed">Terkalibrasi saja</option></select><label className="check-row"><input type="checkbox" checked={metadata} onChange={(event) => setMetadata(event.target.checked)} /> Sertakan metadata sesi</label><label className="check-row"><input type="checkbox" checked={markers} onChange={(event) => setMarkers(event.target.checked)} /> Sertakan event marker</label><button className="primary export-create" disabled={!selected.length || saving} onClick={create}>{saving ? "Menyiapkan berkas…" : `Buat ${format === "xlsx" ? "laporan Excel" : "ekspor CSV"}`}</button></article><article className="panel"><p className="eyebrow">ARSIP EKSPOR</p><h3>Berkas siap diunduh</h3><div className="export-list">{jobs.map((job) => <div key={job.id}><div><span className={`file-kind ${job.file_format ?? (job.filename.endsWith(".xlsx") ? "xlsx" : "csv")}`}>{job.filename.endsWith(".xlsx") ? "XLSX" : "CSV"}</span><strong>{job.filename}</strong><span>{job.row_count} baris · {job.data_mode} · {new Date(job.created_at).toLocaleString("id-ID")}</span><code title={job.checksum}>SHA-256 {job.checksum.slice(0, 16)}…</code></div><div className="row-actions"><button className="secondary compact" onClick={() => download(job)}>Unduh</button><button className="danger-button compact" onClick={() => remove(job)}>Hapus</button></div></div>)}</div>{jobs.length === 0 && <p className="empty-state">Belum ada berkas ekspor.</p>}</article></section></>;
 }
 
 function History({ accessToken, onUnauthorized, onView }: { accessToken: string; onUnauthorized: () => void; onView: (id: string) => void }) {
@@ -563,6 +591,8 @@ function Monitoring({ device, accessToken, role, onUnauthorized }: { device: Dev
   const [tab, setTab] = useState<"emg" | "tongue_pressure" | "lip_force">("tongue_pressure");
   const [fsrPoint, setFsrPoint] = useState("median_anterior");
   const [markerLabel, setMarkerLabel] = useState("Posisi istirahat");
+  const [customMarker, setCustomMarker] = useState("");
+  const [customMarkerActive, setCustomMarkerActive] = useState(false);
   const [results, setResults] = useState<SessionResults | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -590,7 +620,15 @@ function Monitoring({ device, accessToken, role, onUnauthorized }: { device: Dev
   useEffect(() => { if (selected && !selected.modules.includes(tab)) { const first = selected.modules.find((item) => ["emg", "tongue_pressure", "lip_force"].includes(item)); if (first) setTab(first as typeof tab); } }, [selectedId, sessions]);
   const transition = async (action: "start" | "finalize") => { if (!selected) return; setSaving(true); try { const response = await fetch(`${API}/sessions/${selected.id}/${action}`, { method: "POST", headers }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Status sesi tidak dapat diubah."); } await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); } };
   const control = async (phase: SessionControl["phase"]) => { if (!selected) return; setSaving(true); setError(""); try { const stage = tab === "tongue_pressure" ? `tongue_press_${fsrPoint}` : tab === "emg" ? `emg_${selected.electrode_site ?? "unspecified"}` : "lip_force_pull"; const response = await fetch(`${API}/sessions/${selected.id}/control`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ measurement: tab, phase, protocol_stage: stage, fsr_point: tab === "tongue_pressure" ? fsrPoint : null }) }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Kontrol tahap gagal."); } await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); } };
-  const addMarker = async () => { if (!selected) return; setSaving(true); setError(""); try { const response = await fetch(`${API}/sessions/${selected.id}/markers`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ label: markerLabel, protocol_stage: markerLabel.toLowerCase().replaceAll(" ", "_"), occurred_at: new Date().toISOString() }) }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Event marker tidak dapat disimpan."); } await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); } };
+  const markerOptions = [
+    ["Posisi istirahat", "Baseline tanpa gerakan aktif"],
+    ["Menutup mulut", "Kontak bibir tanpa clenching"],
+    ["Menggigit (clenching)", "Kontraksi otot saat menggigit"],
+    ["Tekanan lidah", "Dorongan lidah pada sensor"],
+    ["Tarikan gaya bibir", "Fase traksi pengukuran bibir"],
+  ];
+  const activeMarkerLabel = customMarkerActive ? customMarker.trim() : markerLabel;
+  const addMarker = async () => { if (!selected || !activeMarkerLabel) return; setSaving(true); setError(""); try { const response = await fetch(`${API}/sessions/${selected.id}/markers`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ label: activeMarkerLabel, protocol_stage: activeMarkerLabel.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "custom_note", occurred_at: new Date().toISOString() }) }); if (!response.ok) { const body = await response.json() as { detail?: string }; throw new Error(body.detail ?? "Event marker tidak dapat disimpan."); } if (customMarkerActive) setCustomMarker(""); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Terjadi kesalahan."); } finally { setSaving(false); } };
   const values = results?.points.map((point) => point.value) ?? [];
   const current = values.at(-1); const average = results?.summary.average; const peak = results?.summary.maximum; const controlState = results?.control;
   const tabLabel = tab === "emg" ? "Aktivitas EMG" : tab === "tongue_pressure" ? "Tekanan Lidah" : "Gaya Bibir";
@@ -604,7 +642,7 @@ function Monitoring({ device, accessToken, role, onUnauthorized }: { device: Dev
       : <div className="measurement-tabs" role="tablist" aria-label="Jenis pengukuran">{selected.modules.map((module) => <button key={module} role="tab" aria-selected={tab === module} onClick={() => setTab(module as typeof tab)}>{module === "emg" ? "Aktivitas EMG" : module === "tongue_pressure" ? "Tekanan Lidah" : "Gaya Bibir"}</button>)}</div>}
     <section className="live-metrics"><Metric label="Nilai saat ini" value={current?.toFixed(1) ?? "—"} detail={results?.points.length ? unit : "Menunggu data"} /><Metric label="Nilai puncak" value={peak?.toFixed(1) ?? "—"} detail={`${channel} · ${unit}`} /><Metric label="Rata-rata" value={average?.toFixed(1) ?? "—"} detail={`${results?.sample_count ?? 0} sampel · ${unit}`} /><Metric label="Tahap aktif" value={controlState?.phase ?? "idle"} detail={controlState?.protocol_stage ?? "Belum dimulai"} /></section>
     <section className="live-monitor-grid"><article className="panel live-chart-panel"><div className="panel-title"><div><p className="eyebrow">{tabLabel}</p><h3>{tab === "emg" ? `Sensor EMG · elektroda ${selected.electrode_site?.replaceAll("_", " ") ?? "belum ditentukan"}` : tab === "tongue_pressure" ? `FSR lidah · titik ${fsrPoint.replaceAll("_", " ")}` : "Load cell HX711 · traksi"}</h3></div><span className="unit live-unit"><i />LIVE · {unit}</span></div><MedicalSignalChart points={results?.points ?? []} label={tabLabel} unit={unit} tone={tab === "emg" ? "navy" : tab === "tongue_pressure" ? "teal" : "blue"} emptyMessage="Tekan Mulai ukur di bawah. Perangkat dan LCD akan mengikuti kontrol dashboard secara otomatis."/><div className="measurement-controls">{tab === "tongue_pressure" && <select aria-label="Titik ukur FSR" value={fsrPoint} onChange={(event) => setFsrPoint(event.target.value)}><option value="median_anterior">Median anterior</option><option value="median_middle">Median tengah</option><option value="median_posterior">Median posterior</option><option value="lateral_left">Lateral kiri</option><option value="lateral_right">Lateral kanan</option></select>}{tab === "tongue_pressure" && <button className="secondary" disabled={selected.status !== "active" || saving} onClick={() => control("baseline")}>Mulai baseline</button>}<button className="primary" disabled={selected.status !== "active" || saving} onClick={() => control("recording")}>Mulai ukur {tab === "emg" ? "EMG" : tab === "tongue_pressure" ? "titik ini" : "gaya bibir"}</button><button className="secondary" disabled={selected.status !== "active" || saving || !controlState} onClick={() => control("paused")}>Jeda</button><button className="secondary" disabled={selected.status !== "active" || saving || !controlState} onClick={() => control("completed")}>Selesai tahap</button></div><p className="chart-summary">Kontrol tersinkron ke perangkat · {results?.batch_count ?? 0} batch · kualitas baik {results?.summary.quality.good ?? 0}</p></article>
-    <aside className="panel live-side"><p className="eyebrow">STATUS PENGUKURAN</p><h3>{controlState ? `${controlState.measurement} · ${controlState.phase}` : "Belum ada tahap aktif"}</h3>{tab === "tongue_pressure" && <TonguePointMap active={fsrPoint} values={results?.points.map((point) => point.value) ?? []} />}<div className="quality-list"><p><span>Koneksi device</span><strong>{device.connection}</strong></p><p><span>Kualitas baik</span><strong>{results?.summary.quality.good ?? 0}</strong></p><p><span>Paket tersimpan</span><strong>{results?.batch_count ?? 0}</strong></p><p><span>Downsample</span><strong>{results?.downsample_stride ?? 1}×</strong></p></div>{role !== "researcher" && <div className="event-marker-panel"><p className="eyebrow">EVENT MARKER</p><label htmlFor="live-event">Fase klinis saat ini</label><select id="live-event" value={markerLabel} onChange={(event) => setMarkerLabel(event.target.value)}><option>Posisi istirahat</option><option>Menutup mulut</option><option>Menggigit (clenching)</option><option>Tekanan lidah</option><option>Tarikan gaya bibir</option></select><button className="secondary" disabled={selected.status !== "active" || saving} onClick={addMarker}>Tandai event sekarang</button><small>Tombol mulai, jeda, dan selesai tahap juga membuat marker otomatis.</small></div>}</aside></section></>}
+    <aside className="panel live-side"><p className="eyebrow">STATUS PENGUKURAN</p><h3>{controlState ? `${controlState.measurement} · ${controlState.phase}` : "Belum ada tahap aktif"}</h3>{tab === "tongue_pressure" && <TonguePointMap active={fsrPoint} values={results?.points.map((point) => point.value) ?? []} />}<div className="quality-list"><p><span>Koneksi device</span><strong>{device.connection}</strong></p><p><span>Kualitas baik</span><strong>{results?.summary.quality.good ?? 0}</strong></p><p><span>Paket tersimpan</span><strong>{results?.batch_count ?? 0}</strong></p><p><span>Downsample</span><strong>{results?.downsample_stride ?? 1}×</strong></p></div>{role !== "researcher" && <div className="event-marker-panel"><div><p className="eyebrow">EVENT MARKER</p><h4>Pilih kondisi yang sedang terjadi</h4></div><div className="event-card-grid">{markerOptions.map(([label, description]) => <button type="button" key={label} className={`event-marker-card ${!customMarkerActive && markerLabel === label ? "selected" : ""}`} aria-pressed={!customMarkerActive && markerLabel === label} onClick={() => { setMarkerLabel(label); setCustomMarkerActive(false); }}><strong>{label}</strong><span>{description}</span></button>)}<button type="button" className={`event-marker-card custom ${customMarkerActive ? "selected" : ""}`} aria-pressed={customMarkerActive} onClick={() => setCustomMarkerActive(true)}><strong>Catatan kustom</strong><span>Tulis marker sesuai temuan dokter</span></button></div>{customMarkerActive && <label className="custom-marker-field" htmlFor="custom-event-marker"><span>Isi catatan marker</span><textarea id="custom-event-marker" autoFocus maxLength={120} rows={3} placeholder="Contoh: Pasien mengeluh nyeri saat tekanan meningkat" value={customMarker} onChange={(event) => setCustomMarker(event.target.value)} /></label>}<button className="primary marker-submit" disabled={selected.status !== "active" || saving || !activeMarkerLabel} onClick={addMarker}>Tandai “{activeMarkerLabel || "Catatan kustom"}” sekarang</button><small>Tombol mulai, jeda, dan selesai tahap juga membuat marker otomatis.</small></div>}</aside></section></>}
   </>;
 }
 
