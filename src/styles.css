@@ -13,6 +13,23 @@
 .subject-list>div:hover{border-color:#a8d6d6;box-shadow:0 5px 18px rgba(3,48,117,.07)}
 .subject-year{display:grid;gap:3px;font-variant-numeric:tabular-nums}
 .subject-year small{color:var(--muted);font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.emg-baseline{margin:16px 0 20px;padding:20px;border:1px solid var(--line);border-radius:12px;background:var(--surface,#fff);color:var(--text)}
+.baseline-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px}
+.baseline-heading h3{margin:0;font-size:18px}.baseline-heading>span{font-size:13px;color:var(--primary)}
+.baseline-steps{display:flex;flex-wrap:wrap;gap:12px 24px;list-style:none;padding:0;margin:18px 0;font-size:13px}
+.baseline-steps li{display:flex;align-items:center;gap:8px;color:var(--primary)}
+.baseline-steps li>span{display:grid;place-items:center;width:26px;height:26px;border:1px solid currentColor;border-radius:50%}
+.baseline-steps li[aria-current=step]{font-weight:700;color:#006e70}
+.baseline-steps li[aria-current=step]>span{background:#dff4f3}
+.emg-baseline p{max-width:76ch;font-size:14px;line-height:1.6;margin:10px 0}
+.baseline-prepared{display:flex;align-items:flex-start;gap:10px;font-size:14px;line-height:1.6;padding:10px 0;cursor:pointer}
+.baseline-prepared input{width:20px;height:20px;flex-shrink:0;margin-top:2px;accent-color:var(--teal)}
+.baseline-status{font-weight:700;color:var(--primary)}.baseline-reason{color:#40576f}
+.baseline-values{display:flex;flex-wrap:wrap;gap:16px 32px;margin:16px 0}.baseline-values dt{font-size:13px;color:#40576f}
+.baseline-values dd{margin:5px 0 0;font-size:18px;font-variant-numeric:tabular-nums;color:var(--primary)}
+.baseline-actions{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}.baseline-actions button{min-height:44px}
+.emg-baseline>small{display:block;max-width:85ch;font-size:12px;line-height:1.6;color:#40576f}
+@media(max-width:720px){.emg-baseline{padding:16px}.baseline-steps{display:grid;grid-template-columns:1fr 1fr;gap:12px}.baseline-actions button{width:100%}}
 .modal-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:20px;background:rgba(3,28,59,.58);backdrop-filter:blur(4px)}
 .modal-card{width:min(620px,100%);max-height:calc(100dvh - 40px);overflow:auto;border:1px solid #c9dbe9;border-radius:16px;background:#fff;padding:24px;box-shadow:0 24px 70px rgba(3,28,59,.28)}
 .modal-heading{margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--line)}
