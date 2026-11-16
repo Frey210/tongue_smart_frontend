@@ -41,3 +41,19 @@ Recheck `npm audit` on future dependency changes. Zero reported advisories means
 no known findings in that registry audit at the check time, not a guarantee that
 the application or dependencies have no undiscovered vulnerabilities. Backend,
 firmware and container-OS dependency audits are outside this remediation scope.
+
+## Deployment result
+
+Code commit 485cc64 was pushed and deployed through Tailscale on 2026-11-16.
+Preflight confirmed zero active examination sessions. Only the frontend was
+rebuilt/recreated (`docker compose up -d --no-deps --build frontend`); the backend
+was not restarted. Server-side npm ci also reported zero vulnerabilities and
+the Linux production build passed with Vite 8.2.4. Public HTTPS health/ready
+checks passed and the served asset is `index-8ZY6wkz9.js`.
+
+The isolated Playwright regression fixture passed countdown, stopwatch,
+pause/resume/reset, input validation, session changes, marker selection/save/
+error/retry, export download filename, and responsive checks. It used mocked
+API data and did not start a live device examination. Historical notes about
+three pending findings in earlier deployment records are superseded by this
+remediation record; those notes describe the previous build.
