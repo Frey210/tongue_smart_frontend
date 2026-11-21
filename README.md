@@ -17,3 +17,19 @@ It requires the matching baseline API and firmware 0.7.0. Values remain estimate
 uV with an unverified gain; the interface does not map them to clinical norms.
 Moving electrodes requires another baseline. Pause/cancel and retry preserve
 the explicit workflow instead of silently using a default baseline.
+
+## Required examination device selection (2026-11-21)
+
+The preparation wizard starts with no selected device. Step 3 requires an
+explicit choice and lists ONLINE/OFFLINE beside each device name and ID.
+Registry refreshes never select the first device automatically. If the chosen
+device disappears, continuation and session submission are blocked; the request
+uses only the explicitly selected device, never a fallback. Offline devices
+remain selectable for preparation; connect the device before acquiring data.
+
+Verification: production build and isolated Playwright checks passed for blank
+selection, required/placeholder/status labels, refresh preservation, removal at
+confirmation, exact selected device in the session request, empty registry and
+375px layout. Desktop/mobile screenshots are in
+`../output/screenshots/device-choice-20261121/`. Tests used mocked API responses,
+not patient data or hardware; deployment requires Tailscale SSH authentication.
