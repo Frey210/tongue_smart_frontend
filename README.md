@@ -32,4 +32,10 @@ selection, required/placeholder/status labels, refresh preservation, removal at
 confirmation, exact selected device in the session request, empty registry and
 375px layout. Desktop/mobile screenshots are in
 `../output/screenshots/device-choice-20261121/`. Tests used mocked API responses,
-not patient data or hardware; deployment requires Tailscale SSH authentication.
+not patient data or hardware.
+
+Deployment verified 2026-11-21: commit `1b8cef7` pulled through Tailscale SSH
+and the frontend container rebuilt/recreated on port 8180. Both containers
+reported healthy; public HTTPS `/health` and `/ready` returned 200. The same
+isolated Playwright checks passed against the deployed public frontend bundle.
+No patient/session writes or hardware commands were sent to the live API.
